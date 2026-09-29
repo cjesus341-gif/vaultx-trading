@@ -56,7 +56,7 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now} 
         return send(markets.every(m => m.status === 'unavailable') ? 503 : 200, {source:'Coinbase Exchange', currency:'USD', refreshSeconds:15, markets});
       }
       if (url.pathname === '/' || url.pathname === '/index.html') {
-        const html = await readFile(path.join(ROOT, 'public/index.html'));
+        const html = await readFile(path.join(ROOT, 'index.html'));
         res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin'});
         return res.end(html);
       }
