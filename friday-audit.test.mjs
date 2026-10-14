@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {paginateAdvanced,auditPortfolio} from './friday-audit.mjs';
+test('account and fill cursors gather multiple pages',async()=>{let calls=0;const r=await paginateAdvanced(async(_m,_p,{query})=>{calls++;return query.cursor?{accounts:[{uuid:'b'}],has_next:false}:{accounts:[{uuid:'a'}],has_next:true,cursor:'next'};},'/accounts',{field:'accounts'});assert.equal(r.complete,true);assert.equal(r.rows.length,2);assert.equal(calls,2);});
+test('missing cursor and duplicate IDs fail closed',async()=>{const r=await paginateAdvanced(async()=>({fills:[{entry_id:'a'}],has_next:true}),'/fills',{field:'fills'});assert.equal(r.complete,false);});
+test('exposure cannot be marked verified with unknown accounts or incomplete orders',()=>{const report=auditPortfolio({accountsInventory:{rows:[{uuid:'1',currency:'BTC',available_balance:{value:'0.1'},hold:{value:'0'}}],complete:true},ordersInventory:{orders:[],complete:false},fillsInventory:{rows:[],complete:true},price:100});assert.equal(report.checks[2].passed,false);assert.equal(report.checks[3].passed,false);});
