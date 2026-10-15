@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {previewRequest,orderLookupId,summarizePreview,summarizeOrder} from './friday-coinbase-verification.mjs';
+const good={amountUsd:5,entryPrice:80000,stopPrice:79000,targetPrice:82000};
+test('valid protected limit-buy preview constructed',()=>{const b=previewRequest(good);assert.equal(b.side,'BUY');assert.equal(b.order_configuration.limit_limit_gtc.base_size,'0.00006250');assert.equal(b.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price,'79000.00')});
+test('bad protection is rejected',()=>assert.throws(()=>previewRequest({...good,stopPrice:81000}),/stop must/));
+test('amount cap rejects',()=>assert.throws(()=>previewRequest({...good,amountUsd:101}),/valid amount/));
+test('order id rejects path injection',()=>assert.throws(()=>orderLookupId('../bad'),/valid/));
+test('preview alone never certifies protection',()=>{const d=summarizePreview({preview_id:'p1'});assert.equal(d.protectionVerified,false);assert.equal(d.noOrderSubmitted,true)});
+test('preview rejects quoted errors',()=>assert.equal(summarizePreview({errs:['PREVIEW_INVALID']}).acceptedForPreview,false));
+test('only BTC order can be inspected',()=>assert.throws(()=>summarizeOrder({order:{product_id:'ETH-USD'}}),/BTC-USD/));
