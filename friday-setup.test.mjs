@@ -1,0 +1,11 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {proposeFridaySetup} from './friday-setup.mjs';
+const now=Date.now(),product={price_increment:'0.01',base_increment:'0.00000001',base_min_size:'0.00000001',quote_min_size:'1'};
+const report={status:'current',frames:{'5m':{closedAt:new Date(now-60000).toISOString(),atr14:100,recentLow:79000,trend:'bullish',recentCandles:Array.from({length:24},(_,i)=>({close:82000+i}))}}};
+const args={report,product,referencePrice:82300,timeframe:'5m',riskPct:.5,availableUsd:9.75,nowMs:now};
+test('small wallet blocked by fee-aware min',()=>{const v=proposeFridaySetup(args);assert.equal(v.eligible,false);assert.match(v.reason,/minimum/);assert.equal(v.noOrderSubmitted,true)});
+test('larger balance produces valid ATR and support-derived levels',()=>{const v=proposeFridaySetup({...args,availableUsd:1000});assert.equal(v.eligible,true);assert.ok(v.stopPrice<v.entryPrice&&v.targetPrice>v.entryPrice);assert.equal(v.strategyQualified,false);assert.equal(v.executionEnabled,false)});
+test('reject stale candles',()=>assert.match(proposeFridaySetup({...args,report:{...report,frames:{'5m':{...report.frames['5m'],closedAt:new Date(now-800000).toISOString()}}}}).reason,/stale/));
+test('reject unknown product increment',()=>assert.equal(proposeFridaySetup({...args,product:{...product,price_increment:null}}).eligible,false));
+test('reject unavailable or incomplete report',()=>assert.equal(proposeFridaySetup({...args,report:{status:'unavailable'}}).eligible,false));
+test('reject invalid wallet/risk values',()=>assert.equal(proposeFridaySetup({...args,riskPct:4}).eligible,false));
