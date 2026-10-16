@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {assessFridayRisk,createFridayRiskLedger} from './friday-risk-ledger.mjs';
+const base={report:{complete:true,matchedFillCoverage:true,matchedTrades:[{soldAt:'2026-10-16T01:00:00Z',pnlUsd:-.1}],fillCount:2,openBtc:0},ordersComplete:true,accountsComplete:true,balancesValid:true,balanceBtc:0,openBtcOrders:0,portfolioCoverageVerified:false};
+const at=Date.parse('2026-10-16T02:00:00Z');
+test('Unknown portfolio scope always blocks',()=>{const r=assessFridayRisk(base,{now:at});assert.equal(r.ready,false);assert.match(r.reasons.join(' '),/portfolio/);});
+test('Daily limit refuses a loss greater than cap',()=>{const d=structuredClone(base);d.portfolioCoverageVerified=true;d.report.matchedTrades[0].pnlUsd=-.3;const r=assessFridayRisk(d,{now:at});assert.equal(r.ready,false);assert.match(r.reasons.join(' '),/loss cap/);});
+test('Incomplete fills and active orders refuse trading',()=>{const d=structuredClone(base);d.portfolioCoverageVerified=true;d.report.complete=false;d.openBtcOrders=1;const r=assessFridayRisk(d,{now:at});assert.equal(r.ready,false);assert.ok(r.reasons.length>=2);});
+test('UTC day calculation excludes yesterday',()=>{const d=structuredClone(base);d.portfolioCoverageVerified=true;d.report.matchedTrades[0].soldAt='2026-10-15T23:00:00Z';const r=assessFridayRisk(d,{now:at});assert.equal(r.dailyRealizedUsd,0);});
+test('Durable journal restarts and tampering locks out',async()=>{const dir=await mkdtemp(path.join(tmpdir(),'friday-risk-'));const f=path.join(dir,'risk.json');try{const r=assessFridayRisk(base,{now:at});const a=createFridayRiskLedger({filePath:f,now:()=>at});assert.equal((await a.record(base,r)).entries,1);const b=createFridayRiskLedger({filePath:f,now:()=>at+1000});assert.equal((await b.record(base,r)).entries,2);const raw=JSON.parse(await readFile(f,'utf8'));raw.entries[0].realized=1000;await writeFile(f,JSON.stringify(raw));const c=createFridayRiskLedger({filePath:f,now:()=>at});await assert.rejects(c.record(base,r),/corrupt/);}finally{await rm(dir,{recursive:true,force:true});}});
