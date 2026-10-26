@@ -5,10 +5,11 @@ import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
 import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
 export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD'];
 export const EDITH_RATIOS=[1.5,2,3,5,10];
-const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=1.25, BAR_MS=300000;
-// New experimental variants only: legacy fills, fees, stops and journals remain unchanged.
+const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=3, BAR_MS=300000;
+const EDITH_PAPER_RULESET='atr3-reset-2026-10-25';
+// All paper variants use the same ATR-based stop. Cost-aware variants retain their separate fee gates.
 const EXP_PREFIX='cost-aware-';
-const EXP_STOP_ATR_MULT=2;
+const EXP_STOP_ATR_MULT=STOP_MULT;
 const EXP_MIN_NET_RR=1.2;
 const EXP_MAX_COST_SHARE=.30;
 const expVariant=v=>v.strategy.startsWith(EXP_PREFIX);
@@ -47,12 +48,30 @@ export function createEdithForward({filePath,now=Date.now}={}){
      doc.variants[k].pending=null;upgraded=true;
     }
    }
+   // New paper research epoch: back up old results, then reset all 50 virtual
+   // accounts. Keep existing candle watermarks so no historical signals replay.
+   if(doc.paperRuleset!==EDITH_PAPER_RULESET){
+    const archive=filePath+'.pre-'+EDITH_PAPER_RULESET+'.json';
+    try{
+     await writeFile(archive,JSON.stringify(doc,null,2),{flag:'wx',mode:0o600});
+    }catch(error){
+     if(error.code!=='EEXIST')throw error;
+     const prior=JSON.parse(await readFile(archive,'utf8'));
+     if(prior.schema!==1||!prior.variants||!prior.watermarks||!Array.isArray(prior.trades))
+      throw Error('EDITH archive invalid; refusing paper reset');
+    }
+    doc.variants=variants();doc.trades=[];doc.scanCount=0;
+    doc.lastRun=null;doc.lastError=null;doc.marketHealth={};
+    doc.lastScanMarketsProcessed=null;doc.paperRuleset=EDITH_PAPER_RULESET;
+    console.info('[EDITH paper reset] journal archived; ATR-based paper leaderboard reset');
+    upgraded=true;
+   }
    state=doc;
    if(!state.marketHealth||typeof state.marketHealth!=='object'){state.marketHealth={};upgraded=true;}
    if(upgraded)await persist();
   }catch(e){
    if(e.code!=='ENOENT')throw Error('EDITH journal invalid — paused; '+e.message);
-   state={schema:1,enabled:true,watermarks:{},variants:variants(),trades:[],createdAt:new Date(now()).toISOString(),lastRun:null,lastError:null,marketHealth:{},scanCount:0};await persist();
+   state={schema:1,enabled:true,watermarks:{},variants:variants(),trades:[],createdAt:new Date(now()).toISOString(),lastRun:null,lastError:null,marketHealth:{},scanCount:0,paperRuleset:EDITH_PAPER_RULESET};await persist();
   }
  }
  async function persist(){await mkdir(path.dirname(filePath),{recursive:true});const tmp=filePath+'.tmp';await writeFile(tmp,JSON.stringify(state,null,2),{mode:0o600});await rename(tmp,filePath);}
@@ -67,7 +86,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   ranked.sort((a,b)=>b.netPnlUsd-a.netPnlUsd);
   return {initialized:true,paperOnly:true,canTradeRealMoney:false,enabled:state.enabled,lastRun:state.lastRun,
    scanCount:state.scanCount,lastError:state.lastError,lastScanMarketsProcessed:state.lastScanMarketsProcessed??null,markets:EDITH_MARKETS,ratios:EDITH_RATIOS,
-   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT},
+   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,paperRuleset:EDITH_PAPER_RULESET},
    experimentAssumptions:{feeRatePerSide:experimentalFee(),slippagePerSide:experimentalSlip(),atrStopMultiplier:EXP_STOP_ATR_MULT,minNetRewardRisk:EXP_MIN_NET_RR,maxCostFractionOfGrossTarget:EXP_MAX_COST_SHARE,legacyUnchanged:true},
    strategies:ranked,recentTrades:state.trades.slice(-100).reverse(),marketHealth:state.marketHealth||{},
    limitations:'Forward paper estimates, not live orders. Short trades are simulated. OHLC cannot determine intrabar order; stop wins ties. No borrow/funding, liquidity or true order-book fills. Ranking alone never authorizes live trading.'};
@@ -108,7 +127,9 @@ export function createEdithForward({filePath,now=Date.now}={}){
   v.pending=null;
   const experimental=expVariant(v),fee=experimental?experimentalFee():FEE,slip=experimental?experimentalSlip():SLIP;
   const entry=price*(p.side==='LONG'?1+slip:1-slip);
-  const stopDistance=experimental?p.atr*EXP_STOP_ATR_MULT:p.avgRange*STOP_MULT;
+  // True range captures gaps between candles; apply exactly the same multiple
+  // to every paper strategy, with targets derived from each variant's ratio.
+  const stopDistance=p.atr*STOP_MULT;
   if(!(stopDistance>0&&entry>stopDistance&&entry>0))return;
   const stop=p.side==='LONG'?entry-stopDistance:entry+stopDistance;
   const target=p.side==='LONG'?entry+stopDistance*v.rewardRisk:entry-stopDistance*v.rewardRisk;
@@ -207,10 +228,10 @@ export function createEdithForward({filePath,now=Date.now}={}){
    if(expVariant(v))v.signalCount=(v.signalCount||0)+1;
    const avgRange=candles.slice(-14).reduce((n,c)=>n+c.high-c.low,0)/14;
    if(!(avgRange>0))continue;
-   const atr=expVariant(v)?trueAtr(candles):null;
-   if(expVariant(v)&&!(atr>0))continue;
+   const atr=trueAtr(candles);
+   if(!(atr>0))continue;
    // Signal recorded AFTER this completed candle is observed. No same-bar fill.
-   v.pending={market,side:signal,signalTime:bar.time,avgRange,...(expVariant(v)?{atr}:{}),
+   v.pending={market,side:signal,signalTime:bar.time,avgRange,atr,
      recordedAt:new Date(observedAt).toISOString()};
   }
   state.watermarks[market]=bar.time;
