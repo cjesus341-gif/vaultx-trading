@@ -6,7 +6,7 @@ import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
 export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD'];
 export const EDITH_RATIOS=[1.5,2,2.78,3,5,10];
 const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=6, BAR_MS=300000;
-const FIXED_STOP_FRACTION=.0037, FIXED_REWARD_RISK=2.78, FIXED_LABEL='fixed-0.37pct-';
+const FIXED_STOP_FRACTION=.0037, WIDE_STOP_FRACTION=.0074, FIXED_REWARD_RISK=2.78, FIXED_LABEL='fixed-0.37pct-', WIDE_LABEL='fixed-0.74pct-';
 // Preserve the existing research journal and leaderboard; changing the stop applies to fresh entries only.
 const EDITH_PAPER_RULESET='atr3-reset-2026-10-25';
 // All paper variants use the same ATR-based stop. Cost-aware variants retain their separate fee gates.
@@ -20,13 +20,14 @@ const experimentalSlip=()=>{const n=Number(process.env.EDITH_PAPER_EXPERIMENT_SL
 const trueAtr=c=>{const last=c.slice(-15);if(last.length<15)return NaN;let total=0;for(let i=1;i<last.length;i++){const x=last[i],prev=last[i-1];total+=Math.max(x.high-x.low,Math.abs(x.high-prev.close),Math.abs(x.low-prev.close));}return total/14;};
 const clone=x=>JSON.parse(JSON.stringify(x));
 const finite=n=>Number.isFinite(Number(n));
-const variantKey=(s,r,mode='ATR')=>`${mode==='FIXED'?FIXED_LABEL:''}${s}@${r}:1`;
+const variantKey=(s,r,mode='ATR')=>`${mode==='FIXED'?FIXED_LABEL:mode==='FIXED_WIDE'?WIDE_LABEL:''}${s}@${r}:1`;
 const blankVariant=(s,r,mode='ATR')=>({strategy:s,rewardRisk:r,stopMode:mode,cash:START_CAPITAL,realizedUsd:0,peakEquity:START_CAPITAL,maxDrawdownUsd:0,
  completed:0,wins:0,tpHits:0,tpFeeLosses:0,tpTrackedClosed:0,grossProfits:0,grossLosses:0,feesUsd:0,pending:null,position:null,trades:[]});
 // Fixed-rate paper variants are parallel experiments: same entry signals, different exit levels.
 const variants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
  ...EDITH_RATIOS.map(r=>[variantKey(s,r),blankVariant(s,r)]),
- [variantKey(s,FIXED_REWARD_RISK,'FIXED'),blankVariant(s,FIXED_REWARD_RISK,'FIXED')]
+ [variantKey(s,FIXED_REWARD_RISK,'FIXED'),blankVariant(s,FIXED_REWARD_RISK,'FIXED')],
+  [variantKey(s,FIXED_REWARD_RISK,'FIXED_WIDE'),blankVariant(s,FIXED_REWARD_RISK,'FIXED_WIDE')]
 ]));
 function validCandle(c){return finite(c.open)&&finite(c.high)&&finite(c.low)&&finite(c.close)&&finite(c.volume)&&Number(c.low)>0&&Number(c.open)>0&&Number(c.high)>=Math.max(Number(c.open),Number(c.close))&&Number(c.low)<=Math.min(Number(c.open),Number(c.close))&&Number(c.volume)>=0&&finite(Date.parse(c.time));}
 function normalize(c){return {time:String(c.time),open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};}
@@ -44,7 +45,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
    // Add new experiment IDs without altering existing fills, positions or watermarks. No backfill.
    for(const [k,initial] of Object.entries(expected)){
     if(!doc.variants[k]){
-     if(initial.stopMode!=='FIXED'&&initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
+     if(!['FIXED','FIXED_WIDE'].includes(initial.stopMode)&&initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
      doc.variants[k]=initial;upgraded=true;
     }else if(!finite(doc.variants[k].cash))throw Error('Invalid EDITH strategy: '+k);
     // Upgrade existing paper records without resetting trades or changing signals.
@@ -92,7 +93,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
  }
  async function persist(){await mkdir(path.dirname(filePath),{recursive:true});const tmp=filePath+'.tmp';await writeFile(tmp,JSON.stringify(state,null,2),{mode:0o600});await rename(tmp,filePath);}
  function summary(){if(!state)return {initialized:false,paperOnly:true,canTradeRealMoney:false};
-  const ranked=Object.entries(state.variants).map(([name,v])=>({name,strategy:v.strategy,stopMode:v.stopMode||'ATR',fixedStopPercent:v.stopMode==='FIXED'?FIXED_STOP_FRACTION*100:null,targetToStopRatio:v.rewardRisk,
+  const ranked=Object.entries(state.variants).map(([name,v])=>({name,strategy:v.strategy,stopMode:v.stopMode||'ATR',fixedStopPercent:v.stopMode==='FIXED'?FIXED_STOP_FRACTION*100:v.stopMode==='FIXED_WIDE'?WIDE_STOP_FRACTION*100:null,targetToStopRatio:v.rewardRisk,
    netPnlUsd:v.realizedUsd,returnPct:100*v.realizedUsd/START_CAPITAL,winRate:v.completed?v.wins/v.completed:null,
    tpHitRate:v.tpTrackedClosed?v.tpHits/v.tpTrackedClosed:null,tpHits:v.tpHits||0,tpFeeLosses:v.tpFeeLosses||0,tpTrackedClosed:v.tpTrackedClosed||0,tpHistoryPartial:!!v.tpHistoryPartial,
    profitFactor:v.grossLosses>0?v.grossProfits/v.grossLosses:null,maxDrawdownUsd:v.maxDrawdownUsd,
@@ -103,7 +104,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   ranked.sort((a,b)=>b.netPnlUsd-a.netPnlUsd);
   return {initialized:true,paperOnly:true,canTradeRealMoney:false,enabled:state.enabled,lastRun:state.lastRun,
    scanCount:state.scanCount,lastError:state.lastError,lastScanMarketsProcessed:state.lastScanMarketsProcessed??null,markets:EDITH_MARKETS,ratios:EDITH_RATIOS,
-   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,fixedStopPercent:FIXED_STOP_FRACTION*100,fixedRewardRisk:FIXED_REWARD_RISK,paperRuleset:EDITH_PAPER_RULESET},
+   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,fixedStopPercent:FIXED_STOP_FRACTION*100,wideFixedStopPercent:WIDE_STOP_FRACTION*100,fixedRewardRisk:FIXED_REWARD_RISK,paperRuleset:EDITH_PAPER_RULESET},
    experimentAssumptions:{feeRatePerSide:experimentalFee(),slippagePerSide:experimentalSlip(),atrStopMultiplier:EXP_STOP_ATR_MULT,minNetRewardRisk:EXP_MIN_NET_RR,maxCostFractionOfGrossTarget:EXP_MAX_COST_SHARE,legacyUnchanged:true},
    strategies:ranked,recentTrades:state.trades.slice(-100).reverse(),marketHealth:state.marketHealth||{},
    limitations:'Forward paper estimates, not live orders. Short trades are simulated. OHLC cannot determine intrabar order; stop wins ties. No borrow/funding, liquidity or true order-book fills. Ranking alone never authorizes live trading.'};
@@ -149,7 +150,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   // True range captures gaps between candles; apply exactly the same multiple
   // to every paper strategy, with targets derived from each variant's ratio.
   // Six ATR rather than three for NEW paper fills. Existing positions retain their levels.
-  const stopDistance=v.stopMode==='FIXED'?entry*FIXED_STOP_FRACTION:p.atr*STOP_MULT;
+  const stopDistance=v.stopMode==='FIXED'?entry*FIXED_STOP_FRACTION:v.stopMode==='FIXED_WIDE'?entry*WIDE_STOP_FRACTION:p.atr*STOP_MULT;
   if(!(stopDistance>0&&entry>stopDistance&&entry>0))return;
   const stop=p.side==='LONG'?entry-stopDistance:entry+stopDistance;
   const target=p.side==='LONG'?entry+stopDistance*v.rewardRisk:entry-stopDistance*v.rewardRisk;
