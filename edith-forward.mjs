@@ -5,7 +5,8 @@ import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
 import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
 export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD'];
 export const EDITH_RATIOS=[1.5,2,3,5,10];
-const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=3, BAR_MS=300000;
+const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=6, BAR_MS=300000;
+// Preserve the existing research journal and leaderboard; changing the stop applies to fresh entries only.
 const EDITH_PAPER_RULESET='atr3-reset-2026-10-25';
 // All paper variants use the same ATR-based stop. Cost-aware variants retain their separate fee gates.
 const EXP_PREFIX='cost-aware-';
@@ -98,6 +99,8 @@ export function createEdithForward({filePath,now=Date.now}={}){
   if(!stopped&&!targeted)return;
   const raw=stopped?p.stop:p.target;
   const slip=p.paperSlipRate??SLIP,fee=p.paperFeeRate??FEE;
+  // Explicit, adverse stop/target fill slippage: LONG exits lower, SHORT exits higher.
+  // Modelled execution may pass the trigger; this is not an extra stop movement.
   const exit=raw*(p.side==='LONG'?1-slip:1+slip);
   const gross=(p.side==='LONG'?exit-p.entry:p.entry-exit)*p.qty;
   const exitFee=exit*p.qty*fee,net=gross-p.entryFee-exitFee;
@@ -106,7 +109,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   const trade={variant:variantKey(v.strategy,v.rewardRisk),strategy:v.strategy,rewardRisk:v.rewardRisk,market:p.market,
    side:p.side,signalTime:p.signalTime,entryTime:p.entryTime,exitTime:bar.time,entry:p.entry,exit,
    stop:p.stop,target:p.target,quantity:p.qty,notionalUsd:p.entry*p.qty,feesUsd:p.entryFee+exitFee,grossPnlUsd:gross,netPnlUsd:net,
-   feeRatePerSide:fee,slippagePerSide:slip,
+   feeRatePerSide:fee,slippagePerSide:slip,triggerPrice:raw,exitSlippageUsd:Math.abs(exit-raw)*p.qty,
    intendedRiskUsd:Math.abs(p.entry-p.stop)*p.qty,
    actualLossIfAnyUsd:Math.max(0,-net),
    intendedNetRewardRisk:p.intendedNetRewardRisk??null,
@@ -129,6 +132,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   const entry=price*(p.side==='LONG'?1+slip:1-slip);
   // True range captures gaps between candles; apply exactly the same multiple
   // to every paper strategy, with targets derived from each variant's ratio.
+  // Six ATR rather than three for NEW paper fills. Existing positions retain their levels.
   const stopDistance=p.atr*STOP_MULT;
   if(!(stopDistance>0&&entry>stopDistance&&entry>0))return;
   const stop=p.side==='LONG'?entry-stopDistance:entry+stopDistance;
@@ -152,8 +156,11 @@ export function createEdithForward({filePath,now=Date.now}={}){
    }
   }
   const riskDollars=Math.max(0,START_CAPITAL+v.realizedUsd)*RISK_FRACTION;
-  const qty=Math.min(MAX_NOTIONAL/entry,riskDollars/(stopDistance+entry*fee*2+entry*slip*2));
-  if(!(qty>0))return;
+  // Use the exact modelled adverse stop exit in sizing, including round-trip fees.
+  const stopExit=stop*(p.side==='LONG'?1-slip:1+slip);
+  const netLossPerUnit=(p.side==='LONG'?entry-stopExit:stopExit-entry)+entry*fee+stopExit*fee;
+  const qty=Math.min(MAX_NOTIONAL/entry,riskDollars/netLossPerUnit);
+  if(!(qty>0&&Number.isFinite(qty)&&netLossPerUnit>0))return;
   const entryFee=qty*entry*fee;
   v.feesUsd+=entryFee;
   v.filledCount=(v.filledCount||0)+1;
