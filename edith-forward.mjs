@@ -4,7 +4,7 @@ import path from 'node:path';
 import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
 import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
 export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD'];
-export const EDITH_RATIOS=[1.5,2,3,5,10];
+export const EDITH_RATIOS=[1.5,2,2.78,3,5,10];
 const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=6, BAR_MS=300000;
 // Preserve the existing research journal and leaderboard; changing the stop applies to fresh entries only.
 const EDITH_PAPER_RULESET='atr3-reset-2026-10-25';
@@ -40,7 +40,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
    // Add new experiment IDs without altering existing fills, positions or watermarks. No backfill.
    for(const [k,initial] of Object.entries(expected)){
     if(!doc.variants[k]){
-     if(!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
+     if(initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
      doc.variants[k]=initial;upgraded=true;
     }else if(!finite(doc.variants[k].cash))throw Error('Invalid EDITH strategy: '+k);
     // V36 stored delayed candle-open intents without an actual observation timestamp.
