@@ -22,7 +22,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
 const finite=n=>Number.isFinite(Number(n));
 const variantKey=(s,r,mode='ATR')=>`${mode==='FIXED'?FIXED_LABEL:''}${s}@${r}:1`;
 const blankVariant=(s,r,mode='ATR')=>({strategy:s,rewardRisk:r,stopMode:mode,cash:START_CAPITAL,realizedUsd:0,peakEquity:START_CAPITAL,maxDrawdownUsd:0,
- completed:0,wins:0,grossProfits:0,grossLosses:0,feesUsd:0,pending:null,position:null,trades:[]});
+ completed:0,wins:0,tpHits:0,tpFeeLosses:0,tpTrackedClosed:0,grossProfits:0,grossLosses:0,feesUsd:0,pending:null,position:null,trades:[]});
 // Fixed-rate paper variants are parallel experiments: same entry signals, different exit levels.
 const variants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
  ...EDITH_RATIOS.map(r=>[variantKey(s,r),blankVariant(s,r)]),
@@ -47,7 +47,18 @@ export function createEdithForward({filePath,now=Date.now}={}){
      if(initial.stopMode!=='FIXED'&&initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
      doc.variants[k]=initial;upgraded=true;
     }else if(!finite(doc.variants[k].cash))throw Error('Invalid EDITH strategy: '+k);
-    // V36 stored delayed candle-open intents without an actual observation timestamp.
+    // Upgrade existing paper records without resetting trades or changing signals.
+   const variant=doc.variants[k];
+   if(!Number.isInteger(variant.tpTrackedClosed)||!Number.isInteger(variant.tpHits)||!Number.isInteger(variant.tpFeeLosses)){
+    const historical=Array.isArray(variant.trades)?variant.trades:[];
+    const usable=historical.filter(t=>t&&['target','stop'].includes(t.outcome));
+    variant.tpTrackedClosed=usable.length;
+    variant.tpHits=usable.filter(t=>t.outcome==='target').length;
+    variant.tpFeeLosses=usable.filter(t=>t.outcome==='target'&&Number(t.netPnlUsd)<=0).length;
+    variant.tpHistoryPartial=(Number(variant.completed)||0)>usable.length;
+    upgraded=true;
+   }
+   // V36 stored delayed candle-open intents without an actual observation timestamp.
     // Discard those intents rather than filling them retroactively after upgrading.
     else if(doc.variants[k].pending&&!doc.variants[k].pending.recordedAt){
      doc.variants[k].pending=null;upgraded=true;
@@ -83,6 +94,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
  function summary(){if(!state)return {initialized:false,paperOnly:true,canTradeRealMoney:false};
   const ranked=Object.entries(state.variants).map(([name,v])=>({name,strategy:v.strategy,stopMode:v.stopMode||'ATR',fixedStopPercent:v.stopMode==='FIXED'?FIXED_STOP_FRACTION*100:null,targetToStopRatio:v.rewardRisk,
    netPnlUsd:v.realizedUsd,returnPct:100*v.realizedUsd/START_CAPITAL,winRate:v.completed?v.wins/v.completed:null,
+   tpHitRate:v.tpTrackedClosed?v.tpHits/v.tpTrackedClosed:null,tpHits:v.tpHits||0,tpFeeLosses:v.tpFeeLosses||0,tpTrackedClosed:v.tpTrackedClosed||0,tpHistoryPartial:!!v.tpHistoryPartial,
    profitFactor:v.grossLosses>0?v.grossProfits/v.grossLosses:null,maxDrawdownUsd:v.maxDrawdownUsd,
    trades:v.completed,openPosition:v.position?{market:v.position.market,side:v.position.side,entry:v.position.entry,stop:v.position.stop,target:v.position.target,needsReview:!!v.position.dataGap,recoveryStatus:v.position.dataGap?(v.position.recoveryReason||'Awaiting complete price history'):'CLEAR'}:null,
    pendingSignal:v.pending?{market:v.pending.market,side:v.pending.side}:null,feesUsd:v.feesUsd,
@@ -108,7 +120,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   const exit=raw*(p.side==='LONG'?1-slip:1+slip);
   const gross=(p.side==='LONG'?exit-p.entry:p.entry-exit)*p.qty;
   const exitFee=exit*p.qty*fee,net=gross-p.entryFee-exitFee;
-  v.cash+=net;v.realizedUsd+=net;v.completed++;v.wins+=net>0?1:0;v.grossProfits+=Math.max(0,net);v.grossLosses+=Math.max(0,-net);v.feesUsd+=exitFee;
+  v.cash+=net;v.realizedUsd+=net;v.completed++;v.wins+=net>0?1:0;v.tpTrackedClosed=(v.tpTrackedClosed||0)+1;if(targeted&&!stopped){v.tpHits=(v.tpHits||0)+1;if(net<=0)v.tpFeeLosses=(v.tpFeeLosses||0)+1;}v.grossProfits+=Math.max(0,net);v.grossLosses+=Math.max(0,-net);v.feesUsd+=exitFee;
   v.peakEquity=Math.max(v.peakEquity,v.cash);v.maxDrawdownUsd=Math.max(v.maxDrawdownUsd,v.peakEquity-v.cash);
   const trade={variant:variantKey(v.strategy,v.rewardRisk,v.stopMode),strategy:v.strategy,stopMode:v.stopMode||'ATR',rewardRisk:v.rewardRisk,market:p.market,
    side:p.side,signalTime:p.signalTime,entryTime:p.entryTime,exitTime:bar.time,entry:p.entry,exit,
