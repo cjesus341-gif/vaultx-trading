@@ -466,8 +466,8 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
  <div id="v38-edith-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:9px"></div>
  <div id="v38-edith-health" style="font-size:.9rem"></div>
  <details><summary style="font-weight:700;cursor:pointer">Open paper positions</summary><div id="v38-edith-open" class="notice">Tap Refresh to see open positions.</div></details>
- <details open><summary style="font-weight:700;cursor:pointer">Strategy leaderboard</summary><div style="overflow:auto"><table style="width:100%;min-width:520px;border-collapse:collapse"><thead><tr><th>Strategy · target</th><th>Closed</th><th>Net P&amp;L</th><th>Win rate</th><th>Loss rate</th><th>Leverage</th><th>Account</th><th>TP hit rate</th><th>TP hits / net losses</th><th>Max DD</th><th>Assessment</th></tr></thead><tbody id="v38-edith-board"></tbody></table></div></details>
- <p class="small">Win rate = trades profitable after modeled fees and slippage; loss rate = all other completed trades, including breakeven. Account is each strategy's current simulated balance. 3× paper variants use $3 margin and $9 exposure from $300; funding and liquidation are not simulated. TP hit rate = exits triggered by take-profit, even if net negative. TP hits / net losses = take-profit exits / those that still lost money after costs. * indicates available trade-history coverage only.</p>
+ <details open><summary style="font-weight:700;cursor:pointer">Strategy leaderboard</summary><div style="overflow:auto"><table style="width:100%;min-width:520px;border-collapse:collapse"><thead><tr><th>Strategy · target</th><th>Closed</th><th>Net P&amp;L</th><th>Win rate</th><th>TP hit rate</th><th>TP hits / net losses</th><th>Max DD</th><th>Assessment</th></tr></thead><tbody id="v38-edith-board"></tbody></table></div></details>
+ <p class="small">Win rate = trades profitable after costs. TP hit rate = exits triggered by take-profit, even if net negative. TP hits / net losses = take-profit exits / those that still lost money after costs. * indicates available trade-history coverage only.</p>
  <details><summary style="font-weight:700;cursor:pointer">Paper trade history &amp; details</summary><p class="small">Choose a completed trade to inspect entry, exit, costs, and outcome. Each strategy has a separate virtual balance.</p><select id="v38-edith-trade-select" style="width:100%;padding:9px;max-width:100%"><option>No completed trades yet</option></select><div id="v38-edith-trade-detail" class="notice">No completed trade selected.</div></details>
  <details><summary style="font-weight:700;cursor:pointer">Historical backtest · separate from forward results</summary><button id="v35-edith-run" class="btn light" type="button">Compare 3 historical strategies</button><p class="notice" id="v35-edith-results" role="status">Not run. Historical research only, not live performance.</p></details>
  </div></details>
@@ -501,113 +501,7 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
   const warning=document.createElement('p');warning.className='small';warning.textContent=warn.length? 'Data warnings: '+warn.map(([m,x])=>m+' ('+x.status+')').join(', ')+'. Other markets continue independently.':'All last-checked markets reported healthy.';
   edithHealth.append(warning);
   if(warn.length){const details=document.createElement('details');const su=document.createElement('summary');su.textContent='View data warnings';details.append(su);for(const [m,x] of warn){const p=document.createElement('p');p.className='small';p.textContent=m+': '+(x.reason||x.status)+(x.lastSuccessAt?' · Last good: '+new Date(x.lastSuccessAt).toLocaleString():' · No successful quote since tracking started');details.append(p);}edithHealth.append(details);}
-  for(const x of strategies){const tr=document.createElement('tr');const fields=[x.name,String(x.trades),money(x.netPnlUsd),x.winRate==null?'—':(x.winRate*100).toFixed(1)+'%',x.lossRate==null?'—':(x.lossRate*100).toFixed(1)+'%',x.leverage>1?x.leverage+'× · ?'—':(x.tpHitRate*100).toFixed(1)+'%'+(x.tpHistoryPartial?'*':''),String(x.tpHits??0)+' / '+String(x.tpFeeLosses??0)+(x.tpHistoryPartial?'*':''),money(x.maxDrawdownUsd),x.trades<30?'Testing · <30 trades':(x.netPnlUsd>0&&x.profitFactor>1.2&&x.maxDrawdownUsd<100?'Promising · unverified':x.netPnlUsd<0?'Underperforming · review':'Needs review')];
-   for(const f of fields){const td=document.createElement('td');td.style.cssText='padding:9px 6px;border-bottom:1px solid #d9e4d7;font-size:.85rem';td.textContent=f;tr.append(td);}edithBoard.append(tr);}
-  const fallback=document.createElement('option');fallback.value='';fallback.textContent=trades.length?'Select a completed paper trade':'No completed trades yet';edithTradeSelect.append(fallback);
-  trades.forEach((x,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=(x.market||'?')+' '+(x.side||'?')+' · '+(x.variant||x.strategy||'strategy')+' · '+money(x.netPnlUsd);edithTradeSelect.append(o);});
-  edithTradeSelect.onchange=()=>{const x=trades[Number(edithTradeSelect.value)];if(!x){edithTradeDetail.textContent='Select a trade to see the details.';return;}
-   edithTradeDetail.textContent=[x.market+' · '+x.side+' · '+x.variant,'Signal: '+x.signalTime,'Entry: '+x.entryTime+' @ '+x.entry,'Exit: '+x.exitTime+' @ '+x.exit,'Stop: '+x.stop+' · Target: '+x.target,'Quantity: '+x.quantity,...(x.paperLeverage?[`Paper margin: ${x.postedMarginUsd.toFixed(2)} · Leverage: ${x.paperLeverage}× · Exposure: ${money(x.notionalUsd)} · Starting account: ${money(x.startingAccountBalanceUsd)} · Balance after: ${money(x.accountBalanceAfterUsd)} (liquidation/funding not modeled)`]:[]),'Gross P&L: '+(x.grossPnlUsd==null?'Unavailable (older trade)':money(x.grossPnlUsd))+' · Fees: '+money(x.feesUsd),'Net P&L: '+money(x.netPnlUsd)+' · Price exit: '+x.outcome+(x.outcome==='target'&&x.netPnlUsd<=0?' · TP HIT BUT NET LOSS AFTER COSTS':x.netPnlUsd<=0?' (not a profitable trade after costs)':'')].join('\n');edithTradeDetail.style.whiteSpace='pre-line';};
-  edithTradeSelect.onchange();
- }
- forwardButton.textContent='Refresh EDITH dashboard';
- forwardButton.addEventListener('click',async()=>{
-  forwardButton.disabled=true;forwardOut.textContent='Reading forward-paper ledger…';
-  try{const r=await fetch('/api/admin/friday/edith-forward',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(30000)});
-   const d=await r.json();if(!r.ok)throw Error(d.error||'Unable to load');if(!d.enabled){forwardOut.textContent=d.message||'Paper engine disabled';return;}renderEdith(d);
-  }catch(e){forwardOut.textContent='EDITH status unavailable: '+e.message;}
-  finally{forwardButton.disabled=false;}
- });
- const edithButton=section.querySelector('#v35-edith-run'),edithOutput=section.querySelector('#v35-edith-results');
- edithButton.addEventListener('click',async()=>{
-   edithButton.disabled=true;edithOutput.textContent='EDITH is testing historical paper strategies; this may take a moment…';
-   try{
-    const response=await fetch('/api/admin/friday/edith-research?productId='+encodeURIComponent(market.value),
-      {credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(120000)});
-    const d=await response.json();if(!response.ok)throw Error(d.error||'Research failed');
-    const f=v=>Number.isFinite(v)?v.toFixed(3):'—';
-    edithOutput.textContent='PAPER ONLY · '+d.productId+' · '+d.candleCount+' historical candles · No orders\n'+
-      d.strategies.map(x=>x.name+' · TEST: '+x.test.trades+' trades · Net $'+f(x.test.netPnlUsd)+
-      ' · Win '+(x.test.winRate===null?'—':(x.test.winRate*100).toFixed(1)+'%')+
-      ' · Max drawdown $'+f(x.test.maxDrawdownUsd)+' (train: $'+f(x.train.netPnlUsd)+')').join('\n')+
-      '\nResearch only; no strategy is validated or enabled for trading.';
-    edithOutput.style.whiteSpace='pre-line';
-   }catch(e){edithOutput.textContent='EDITH unavailable: '+e.message+' · No order submitted.';}
-   finally{edithButton.disabled=false;}
- });
- const v41Button=section.querySelector('#v41-check'),v41Status=section.querySelector('#v41-status');
- v41Button.addEventListener('click',async()=>{
-  v41Button.disabled=true;v41Status.textContent='Checking fresh LONG signals for nine markets…';
-  try{const r=await fetch('/api/admin/friday/v41-readiness',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(120000)});
-   const d=await r.json();if(!r.ok)throw Error(d.error||'Readiness unavailable');
-   const flags='Multi-market configured: '+!!d.multiLiveConfigured+' · Dual-spot selector: '+!!d.dualSpotConfigured+' · Live switch: '+!!d.autoLiveConfigured+' · Manual execution switch: '+!!d.manualExecutionConfigured;
-   v41Status.textContent=(d.selected?'NOMINATED '+d.selected.productId+' LONG (net R:R '+d.selected.netRR.toFixed(2)+':1)':'NO QUALIFIED LONG')+' · '+d.eligible.length+' eligible · '+d.rejected.length+' rejected\n'+flags+'\n'+d.reason+'\nREAD ONLY · NO ORDER PLACED. Shorts remain simulation-only.';
-   v41Status.style.whiteSpace='pre-line';
-  }catch(e){v41Status.textContent='Check failed: '+e.message+' · No orders placed.';}
-  finally{v41Button.disabled=false;}
- });
- const previewButton=section.querySelector('#v33-preview'),previewStatus=section.querySelector('#v33-preview-status');
- previewButton.addEventListener('click',async()=>{
-  previewButton.disabled=true;previewStatus.textContent='Checking fresh signal, scoped inventory and Coinbase protected-order preview…';
-  try{
-   const r=await fetch('/api/admin/friday/dual-preview?productId='+encodeURIComponent(market.value),
-    {credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(120000)});
-   const d=await r.json();if(!r.ok)throw Error(d.error||'Preview unavailable');
-   const m=d.diagnostics;
-   const usd=v=>Number.isFinite(Number(v))?'$'+Number(v).toFixed(5):'—';
-   const rr=v=>Number.isFinite(Number(v))?Number(v).toFixed(2)+' : 1':'—';
-   previewStatus.textContent=(d.eligible?'COINBASE PREVIEW ACCEPTED':'NO ORDER')+' · '+d.productId+' · '+(d.reason||'')+
-     (m?'\nEntry '+m.entry+' · Stop '+m.stop+' · Target '+m.target+' · Quantity '+m.quantity+
-       '\nNotional '+usd(m.notionalUsd)+' · Entry preview fee '+usd(m.coinbasePreviewCommissionUsd)+
-       ' · Est. exit fee '+usd(m.estimatedExitCommissionUsd)+' · Slippage allowance '+usd(m.slippageAllowanceUsd)+
-       '\nGross reward '+usd(m.grossRewardUsd)+' / risk '+usd(m.grossRiskUsd)+' · Gross R:R '+rr(m.grossRewardRisk)+
-       '\nNet reward '+usd(m.netRewardUsd)+' / risk '+usd(m.netRiskUsd)+' · Net R:R '+rr(m.netRewardRisk)+
-       ' (min '+m.minimumRequiredNetRewardRisk+':1) · Risk budget '+usd(m.maxRiskBudgetUsd)+
-       '\nEstimated net profit '+usd(m.estimatedNetProfitUsd)+' (minimum '+usd(m.minimumNetProfitUsd)+') · Net profit '+(m.passesMinimumNetProfit?'PASS':'FAIL')+
-       '\nRisk cap '+(m.passesRiskBudget?'PASS':'FAIL')+' · Fee-adjusted R:R '+(m.passesNetRewardRisk?'PASS':'FAIL')+
-       '\n'+m.note:'')+'\nREAD ONLY · NO ORDER PLACED.';
-   previewStatus.style.whiteSpace='pre-line';
-  }catch(e){previewStatus.textContent='Preview failed: '+e.message+' · No order placed by this control.';}
-  finally{previewButton.disabled=false;}
- });
-
- const dualButton=section.querySelector('#v31-dual-check'),dualStatus=section.querySelector('#v31-dual-status'),dualResults=section.querySelector('#v31-dual-results');
- dualButton.addEventListener('click',async()=>{
-  dualButton.disabled=true;dualStatus.textContent='Loading the latest completed-candle LONG and SHORT observations…';dualResults.replaceChildren();
-  try{
-   const response=await fetch('/api/admin/friday/dual-scan',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(120000)});
-   const data=await response.json();if(!response.ok)throw Error(data.error||'Observation unavailable');
-   dualStatus.textContent='PAPER ONLY · '+data.scanned+' assets scanned · '+data.qualified+' directional signals · '+(data.best?data.best.productId+' '+data.best.side:'WAIT')+' · Last scan '+new Date(data.scannedAt).toLocaleTimeString()+'. No real orders.';
-   for(const item of data.results||[]){
-    const box=document.createElement('button');box.type='button';box.style.cssText='text-align:left;border:1px solid #dce6d8;border-radius:12px;background:#f4f7f1;color:#16271f;padding:12px';
-    const name=document.createElement('strong');name.textContent=item.productId;box.append(name);
-    const detail=document.createElement('div');detail.className='small';detail.style.marginTop='8px';
-    const side=key=>{const v=item[key];return key.toUpperCase()+': '+(v?.qualified?('PAPER SIGNAL'+(v.costViable?'':' (fees may erase edge)')):(item.error||v?.reasons?.join('; ')||'WAIT'));};
-    detail.textContent=side('long')+' | '+side('short');box.append(detail);
-    const link=document.createElement('div');link.textContent='View market chart ↗';link.style.cssText='margin-top:9px;color:#28684d;font-weight:700';box.append(link);
-    box.addEventListener('click',()=>{if(markets.includes(item.productId)){market.value=item.productId;showChart();chart.scrollIntoView({behavior:'smooth',block:'center'});}});dualResults.append(box);
-   }
-  }catch(e){dualStatus.textContent='Paper scan unavailable: '+e.message+' · No order placed.';}finally{dualButton.disabled=false;}
- });
- const button=section.querySelector('#v29-scan'),status=section.querySelector('#v29-scan-status'),results=section.querySelector('#v29-scan-results');
- button.addEventListener('click',async()=>{
-  button.disabled=true;status.textContent='Evaluating all nine markets, completed candles, and Coinbase product checks…';results.replaceChildren();
-  try{
-   const response=await fetch('/api/admin/friday/market-scan',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(120000)});
-   const data=await response.json();if(!response.ok)throw Error(data.error||'Scan failed');
-   status.textContent='READ-ONLY · '+data.checks.length+' markets · '+data.qualifiedCount+' indicative candidates · '+(data.selected||'No qualified market')+'. No order placed.';
-   for(const x of data.checks){
-    const row=document.createElement('button');row.type='button';row.style.cssText='text-align:left;padding:12px;border:1px solid #dce6d8;border-radius:12px;background:#f4f7f1;color:#14221e;cursor:pointer';
-    const title=document.createElement('strong');title.style.display='block';title.textContent=x.productId+' · '+(x.eligible?'ELIGIBLE (indicative)':x.signalQualified?'FILTER BLOCKED':'WAIT');
-    const reasons=document.createElement('div');reasons.className='small';reasons.style.marginTop='8px';reasons.textContent=(x.reasons||[]).concat(x.failedSignalChecks||[]).join(' · ')||'Indicative checks pass; live Coinbase preview not performed.';
-    const link=document.createElement('span');link.style.cssText='display:block;margin-top:8px;color:#28684d;font-weight:700;font-size:12px';link.textContent='View chart ↗';
-    row.append(title,reasons,link);row.addEventListener('click',()=>{if(markets.includes(x.productId)){market.value=x.productId;showChart();chart.scrollIntoView({behavior:'smooth',block:'center'});}});results.append(row);
-   }
-  }catch(e){status.textContent='Market scan unavailable: '+e.message+' · No orders placed.';}finally{button.disabled=false;}
- });
-})();
-</script>
-</body></html>
-+Number(x.marginPerTradeUsd).toFixed(2)+' margin':'1×',money(x.accountBalanceUsd),x.tpHitRate==null?'—':(x.tpHitRate*100).toFixed(1)+'%'+(x.tpHistoryPartial?'*':''),String(x.tpHits??0)+' / '+String(x.tpFeeLosses??0)+(x.tpHistoryPartial?'*':''),money(x.maxDrawdownUsd),x.trades<30?'Testing · <30 trades':(x.netPnlUsd>0&&x.profitFactor>1.2&&x.maxDrawdownUsd<100?'Promising · unverified':x.netPnlUsd<0?'Underperforming · review':'Needs review')];
+  for(const x of strategies){const tr=document.createElement('tr');const fields=[x.name,String(x.trades),money(x.netPnlUsd),x.winRate==null?'—':(x.winRate*100).toFixed(1)+'%',x.tpHitRate==null?'—':(x.tpHitRate*100).toFixed(1)+'%'+(x.tpHistoryPartial?'*':''),String(x.tpHits??0)+' / '+String(x.tpFeeLosses??0)+(x.tpHistoryPartial?'*':''),money(x.maxDrawdownUsd),x.trades<30?'Testing · <30 trades':(x.netPnlUsd>0&&x.profitFactor>1.2&&x.maxDrawdownUsd<100?'Promising · unverified':x.netPnlUsd<0?'Underperforming · review':'Needs review')];
    for(const f of fields){const td=document.createElement('td');td.style.cssText='padding:9px 6px;border-bottom:1px solid #d9e4d7;font-size:.85rem';td.textContent=f;tr.append(td);}edithBoard.append(tr);}
   const fallback=document.createElement('option');fallback.value='';fallback.textContent=trades.length?'Select a completed paper trade':'No completed trades yet';edithTradeSelect.append(fallback);
   trades.forEach((x,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=(x.market||'?')+' '+(x.side||'?')+' · '+(x.variant||x.strategy||'strategy')+' · '+money(x.netPnlUsd);edithTradeSelect.append(o);});
