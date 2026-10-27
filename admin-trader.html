@@ -459,7 +459,7 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
  <button id="v29-scan" class="btn light" type="button">Scan all 9 markets</button>
  <p class="notice" id="v29-scan-status" role="status">Not scanned. No orders placed.</p>
  <details style="margin-top:12px;border:1px solid #cddccb;border-radius:12px;padding:12px"><summary style="cursor:pointer;font-weight:700">EDITH · Forward-paper dashboard</summary>
- <p class="small">Live-looking prices, simulated trades. All 15 variants use independent virtual balances and the same 0.5% risk setting; results cannot place real orders.</p>
+ <p class="small">Live-looking prices, simulated trades. Standard strategies use independent $1,000 virtual balances; the separately labeled 3× paper experiments use a $300 account and $3 margin ($9 exposure) per position. No live orders. Leverage simulation does not model funding or liquidation.</p>
  <button id="v36-edith-status" class="btn light" type="button">Refresh EDITH dashboard</button>
  <div id="v38-edith-dashboard" style="margin-top:12px;display:grid;gap:12px">
  <p class="notice" id="v36-edith-results" role="status">Tap Refresh EDITH to view forward-paper results. Research only; no live orders.</p>
@@ -506,7 +506,7 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
   const fallback=document.createElement('option');fallback.value='';fallback.textContent=trades.length?'Select a completed paper trade':'No completed trades yet';edithTradeSelect.append(fallback);
   trades.forEach((x,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=(x.market||'?')+' '+(x.side||'?')+' · '+(x.variant||x.strategy||'strategy')+' · '+money(x.netPnlUsd);edithTradeSelect.append(o);});
   edithTradeSelect.onchange=()=>{const x=trades[Number(edithTradeSelect.value)];if(!x){edithTradeDetail.textContent='Select a trade to see the details.';return;}
-   edithTradeDetail.textContent=[x.market+' · '+x.side+' · '+x.variant,'Signal: '+x.signalTime,'Entry: '+x.entryTime+' @ '+x.entry,'Exit: '+x.exitTime+' @ '+x.exit,'Stop: '+x.stop+' · Target: '+x.target,'Quantity: '+x.quantity,'Gross P&L: '+(x.grossPnlUsd==null?'Unavailable (older trade)':money(x.grossPnlUsd))+' · Fees: '+money(x.feesUsd),'Net P&L: '+money(x.netPnlUsd)+' · Price exit: '+x.outcome+(x.outcome==='target'&&x.netPnlUsd<=0?' · TP HIT BUT NET LOSS AFTER COSTS':x.netPnlUsd<=0?' (not a profitable trade after costs)':'')].join('\n');edithTradeDetail.style.whiteSpace='pre-line';};
+   edithTradeDetail.textContent=[x.market+' · '+x.side+' · '+x.variant,'Signal: '+x.signalTime,'Entry: '+x.entryTime+' @ '+x.entry,'Exit: '+x.exitTime+' @ '+x.exit,'Stop: '+x.stop+' · Target: '+x.target,'Quantity: '+x.quantity,...(x.paperLeverage?[`Paper margin: ${x.postedMarginUsd.toFixed(2)} · Leverage: ${x.paperLeverage}× · Exposure: ${money(x.notionalUsd)} · Starting account: ${money(x.startingAccountBalanceUsd)} · Balance after: ${money(x.accountBalanceAfterUsd)} (liquidation/funding not modeled)`]:[]),'Gross P&L: '+(x.grossPnlUsd==null?'Unavailable (older trade)':money(x.grossPnlUsd))+' · Fees: '+money(x.feesUsd),'Net P&L: '+money(x.netPnlUsd)+' · Price exit: '+x.outcome+(x.outcome==='target'&&x.netPnlUsd<=0?' · TP HIT BUT NET LOSS AFTER COSTS':x.netPnlUsd<=0?' (not a profitable trade after costs)':'')].join('\n');edithTradeDetail.style.whiteSpace='pre-line';};
   edithTradeSelect.onchange();
  }
  forwardButton.textContent='Refresh EDITH dashboard';
