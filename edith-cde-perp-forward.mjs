@@ -39,7 +39,7 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
     }
     const prior=e.pending[id];delete e.pending[id];
     if(prior&&prior.time===previous&&!e.positions.some(x=>x.productId===id)){
-     const size=Number(p.future_product_details.contract_size),entry=bar.open;
+     const size=Number(p.future_product_details.contract_size),entry=bar.close;
      const margin=size*entry/3,stopDistance=entry*0.0074,targetDistance=entry*0.0206;
      const estimatedRisk=size*stopDistance+size*entry*0.0022;
      const reserved=e.positions.reduce((sum,x)=>sum+x.marginUsd,0);
