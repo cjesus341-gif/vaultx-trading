@@ -27,7 +27,7 @@ const isLeveraged=v=>String(v?.stopMode||'').startsWith('PAPER_LEVERAGED');
 const blankVariant=(s,r,mode='ATR')=>({strategy:s,rewardRisk:r,stopMode:mode,cash:mode.startsWith('PAPER_LEVERAGED')?LEVERAGE_ACCOUNT_USD:START_CAPITAL,realizedUsd:0,peakEquity:mode.startsWith('PAPER_LEVERAGED')?LEVERAGE_ACCOUNT_USD:START_CAPITAL,maxDrawdownUsd:0,
  completed:0,wins:0,tpHits:0,tpFeeLosses:0,tpTrackedClosed:0,grossProfits:0,grossLosses:0,feesUsd:0,pending:null,position:null,trades:[]});
 // Fixed-rate paper variants are parallel experiments: same entry signals, different exit levels.
-const variants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
+const allVariants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
  ...EDITH_RATIOS.map(r=>[variantKey(s,r),blankVariant(s,r)]),
  ...EDITH_RATIOS.map(r=>[variantKey(s,r,'PAPER_LEVERAGED_ATR'),blankVariant(s,r,'PAPER_LEVERAGED_ATR')]),
  [variantKey(s,FIXED_REWARD_RISK,'FIXED'),blankVariant(s,FIXED_REWARD_RISK,'FIXED')],
@@ -37,7 +37,15 @@ const variants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
 ]));
 function validCandle(c){return finite(c.open)&&finite(c.high)&&finite(c.low)&&finite(c.close)&&finite(c.volume)&&Number(c.low)>0&&Number(c.open)>0&&Number(c.high)>=Math.max(Number(c.open),Number(c.close))&&Number(c.low)<=Math.min(Number(c.open),Number(c.close))&&Number(c.volume)>=0&&finite(Date.parse(c.time));}
 function normalize(c){return {time:String(c.time),open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};}
-export function createEdithForward({filePath,now=Date.now}={}){
+export function createEdithForward({filePath,now=Date.now,paperTimeframeMinutes=5,focused=false}={}){
+ if(![5,15].includes(paperTimeframeMinutes))throw Error('Unsupported EDITH candle timeframe');
+ const BAR_MS=paperTimeframeMinutes*60000;
+ // Focused 15m research tracks only the latest 0.74% / 2.78R setup, with a 3x paper twin.
+ // 5m history remains in its existing journal, never overwritten or deleted.
+ const variants=()=>focused?Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
+  [variantKey(s,FIXED_REWARD_RISK,'FIXED_WIDE'),blankVariant(s,FIXED_REWARD_RISK,'FIXED_WIDE')],
+  [variantKey(s,FIXED_REWARD_RISK,'PAPER_LEVERAGED'),blankVariant(s,FIXED_REWARD_RISK,'PAPER_LEVERAGED')]
+ ])):allVariants();
  let state=null,busy=null;
  const recoveryLogState=new Map();
  async function init(){
@@ -108,7 +116,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
    costGateRejected:v.costGateRejected||0,signalCount:v.signalCount||0,filledCount:v.filledCount||0,
    experimental:expVariant(v)}));
   ranked.sort((a,b)=>b.netPnlUsd-a.netPnlUsd);
-  return {initialized:true,paperOnly:true,canTradeRealMoney:false,enabled:state.enabled,lastRun:state.lastRun,
+  return {initialized:true,paperOnly:true,canTradeRealMoney:false,enabled:state.enabled,paperTimeframeMinutes,focused,lastRun:state.lastRun,
    scanCount:state.scanCount,lastError:state.lastError,lastScanMarketsProcessed:state.lastScanMarketsProcessed??null,markets:EDITH_MARKETS,ratios:EDITH_RATIOS,
    assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,fixedStopPercent:FIXED_STOP_FRACTION*100,wideFixedStopPercent:WIDE_STOP_FRACTION*100,fixedRewardRisk:FIXED_REWARD_RISK,paperLeverage:{startingBalanceUsd:LEVERAGE_ACCOUNT_USD,marginPerTradeUsd:LEVERAGE_MARGIN_USD,leverage:LEVERAGE_MULT,notionalUsd:LEVERAGE_MARGIN_USD*LEVERAGE_MULT,stopPercent:WIDE_STOP_FRACTION*100,rewardRisk:FIXED_REWARD_RISK},paperRuleset:EDITH_PAPER_RULESET},
    experimentAssumptions:{feeRatePerSide:experimentalFee(),slippagePerSide:experimentalSlip(),atrStopMultiplier:EXP_STOP_ATR_MULT,minNetRewardRisk:EXP_MIN_NET_RR,maxCostFractionOfGrossTarget:EXP_MAX_COST_SHARE,legacyUnchanged:true},
