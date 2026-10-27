@@ -26,3 +26,18 @@ export function coinbasePerpCandidates(products){
  if(!Array.isArray(products))throw Error('Coinbase product catalog required');
  return products.filter(p=>p&&p.productId&&p.contractSize&&Number(p.contractSize)>0&&String(p.contractExpiryType||'').toUpperCase().includes('PERP')&&!p.tradingDisabled);
 }
+
+
+// One-contract Coinbase paper research gate. Does not submit orders.
+export const EDITH_ONE_CONTRACT_POLICY=Object.freeze({startingBalanceUsd:300,contractsPerTrade:1,paperOnly:true});
+export function previewEdithOneContract(args){
+ const product=args?.product;
+ if(!product||product.marketGroup==='international-catalog'||product.eligibleForEdith!==true)
+  return {eligible:false,reason:'U.S. futures eligibility not verified'};
+ try{
+  const order=sizeEdithPerpPaper({...args,contracts:1});
+  const limit=EDITH_ONE_CONTRACT_POLICY.startingBalanceUsd*0.02;
+  if(order.estimatedStopLossUsd>limit)return {eligible:false,reason:'Stop loss exceeds 2% paper-account risk limit',estimatedStopLossUsd:order.estimatedStopLossUsd};
+  return {eligible:true,order};
+ }catch(error){return {eligible:false,reason:String(error.message||error)};}
+}
