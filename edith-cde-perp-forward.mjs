@@ -21,7 +21,7 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
    const last=bars.at(-1),previous=state.watermarks[id];
    if(!previous){state.watermarks[id]=last.time;state.health[id]='INITIALIZED';continue;}
    const unseen=bars.filter(b=>b.time>previous);
-   if(unseen.length!==1||Date.parse(unseen[0].time)-Date.parse(previous)!==900000){state.watermarks[id]=last.time;state.health[id]=unseen.length?'RESYNCED_GAP':'WAITING';continue;}
+   if(unseen.length!==1||Date.parse(unseen[0].time)-Date.parse(previous)!==900000){if(unseen.length)for(const e of Object.values(state.experiments)){delete e.pending[id];for(const pos of e.positions)if(pos.productId===id)pos.dataGap=true;}state.watermarks[id]=last.time;state.health[id]=unseen.length?'RESYNCED_GAP':'WAITING';continue;}
    const bar=unseen[0];state.watermarks[id]=bar.time;
    for(const strategy of EDITH_STRATEGIES){const e=state.experiments[strategy];
     for(const position of [...e.positions].filter(x=>x.productId===id&&!x.dataGap)){
