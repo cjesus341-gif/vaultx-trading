@@ -477,7 +477,9 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
   // EDITH v0.2: standalone forward-paper laboratory. Read-only Coinbase candles.
   // No trade, preview, transfer, or execution endpoints are used by this engine.
   const edithForward=createEdithForward({filePath:process.env.DATA_DIR?path.join(dataDir,'edith-forward-15m-focused.json'):null,now,paperTimeframeMinutes:15,focused:true});
-  const edithEnabled=process.env.EDITH_FORWARD_PAPER_ENABLED==='true'&&!!process.env.DATA_DIR;
+  // Legacy spot-based EDITH scanner retired for the perpetuals-only transition.
+  // Existing journal remains on disk as an archive; never load or mutate it.
+  const edithEnabled=false;
   async function edithPaperTick(){
     if(!edithEnabled||!coinbaseConfigured)return;
     return edithForward.tick(async id=>{
