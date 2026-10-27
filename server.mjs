@@ -820,9 +820,9 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       try{
         const raw=await coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',get_all_products:true,limit:250}});
         const list=Array.isArray(raw?.products)?raw.products:[];
-        const products=list.map(p=>({productId:String(p.product_id||''),displayName:String(p.display_name||''),status:String(p.status||''),tradingDisabled:!!p.trading_disabled,contractSize:String(p.future_product_details?.contract_size||''),contractRootUnit:String(p.future_product_details?.contract_root_unit||''),contractExpiryType:String(p.future_product_details?.contract_expiry_type||''),maxLeverage:String(p.future_product_details?.perpetual_details?.max_leverage||''),venue:String(p.product_venue||'')}))
+        const products=list.map(p=>({productId:String(p.product_id||''),displayName:String(p.display_name||''),status:String(p.status||''),tradingDisabled:!!p.trading_disabled,contractSize:String(p.future_product_details?.contract_size||''),contractRootUnit:String(p.future_product_details?.contract_root_unit||''),contractExpiryType:String(p.future_product_details?.contract_expiry_type||''),maxLeverage:String(p.future_product_details?.perpetual_details?.max_leverage||''),venue:String(p.product_venue||''),marketGroup:/USDC-PERPETUAL/i.test(String(p.product_id||''))?'international-catalog':'us-futures-candidate',eligibleForEdith:false}))
          .filter(p=>p.productId&&p.contractSize&&/PERP/i.test(p.contractExpiryType+' '+p.displayName+' '+p.productId));
-        send(200,{paperOnly:true,source:'Coinbase authenticated products API',checkedAt:new Date(now()).toISOString(),products,returnedCount:list.length,warning:'Availability does not establish account eligibility. No paper entries activated.'});
+        send(200,{paperOnly:true,source:'Coinbase authenticated products API',checkedAt:new Date(now()).toISOString(),products,returnedCount:list.length,warning:'Catalog discovery only. International USDC perpetuals are not assumed tradable by this US account. No paper entries activated.'});
       }catch(e){send(502,{error:'Coinbase product catalog unavailable',detail:String(e.message||e)});}
       return true;
     }
