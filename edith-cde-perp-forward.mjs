@@ -23,30 +23,33 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
    const unseen=bars.filter(b=>b.time>previous);
    if(unseen.length!==1||Date.parse(unseen[0].time)-Date.parse(previous)!==900000){state.watermarks[id]=last.time;state.health[id]=unseen.length?'RESYNCED_GAP':'WAITING';continue;}
    const bar=unseen[0];state.watermarks[id]=bar.time;
-   for(const position of [...state.positions].filter(x=>x.productId===id)){
-    const stop=position.side==='LONG'?bar.low<=position.stop:bar.high>=position.stop;
-    const target=position.side==='LONG'?bar.high>=position.target:bar.low<=position.target;
-    if(!stop&&!target)continue;
-    const exit=(stop?position.stop:position.target)*(position.side==='LONG'?0.9995:1.0005);
-    const gross=(position.side==='LONG'?exit-position.entry:position.entry-exit)*position.contractSize;
-    const fees=(position.entry+exit)*position.contractSize*0.0006;
-    const net=money(gross-fees);state.cash=money(state.cash+net);
-    state.trades.push({...position,exit,exitTime:bar.time,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});state.positions=state.positions.filter(x=>x!==position);
-   }
-   const strategy=EDITH_STRATEGIES[0];
-   // Fill only a signal observed in the previous successful scan.
-   const prior=state.signals.findLast(x=>x.productId===id&&x.time===previous&&x.strategy===strategy);
-   if(prior&&!state.positions.some(x=>x.productId===id)){
+   for(const strategy of EDITH_STRATEGIES){const e=state.experiments[strategy];
+    for(const position of [...e.positions].filter(x=>x.productId===id&&!x.dataGap)){
+     if(bar.time<=position.entryTime)continue;
+     const stop=position.side==='LONG'?bar.low<=position.stop:bar.high>=position.stop;
+     const target=position.side==='LONG'?bar.high>=position.target:bar.low<=position.target;
+     if(!stop&&!target)continue;
+     const exit=(stop?position.stop:position.target)*(position.side==='LONG'?0.9995:1.0005);
+     const gross=(position.side==='LONG'?exit-position.entry:position.entry-exit)*position.contractSize;
+     const fees=(position.entry+exit)*position.contractSize*0.0006;
+     const net=money(gross-fees);e.cash=money(e.cash+net);
+     e.peak=Math.max(e.peak,e.cash);e.maxDrawdownUsd=Math.max(e.maxDrawdownUsd,e.peak-e.cash);
+     e.trades.push({...position,exit,exitTime:bar.time,feesUsd:fees,grossPnlUsd:gross,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});
+     e.positions=e.positions.filter(x=>x!==position);
+    }
+    const prior=e.pending[id];delete e.pending[id];
+    if(prior&&prior.time===previous&&!e.positions.some(x=>x.productId===id)){
      const size=Number(p.future_product_details.contract_size),entry=bar.open;
      const margin=size*entry/3,stopDistance=entry*0.0074,targetDistance=entry*0.0206;
      const estimatedRisk=size*stopDistance+size*entry*0.0022;
-     const reserved=state.positions.reduce((sum,x)=>sum+x.marginUsd,0);
-     if(margin<=state.cash-reserved&&estimatedRisk<=Math.max(0,state.cash)*0.02){
-      state.positions.push({productId:id,side:prior.side,contracts:1,contractSize:size,entry,stop:prior.side==='LONG'?entry-stopDistance:entry+stopDistance,target:prior.side==='LONG'?entry+targetDistance:entry-targetDistance,marginUsd:money(margin),entryTime:bar.time,strategy,marginModel:'indicative-3x-not-account-verified'});
+     const reserved=e.positions.reduce((sum,x)=>sum+x.marginUsd,0);
+     if(margin<=e.cash-reserved&&estimatedRisk<=Math.max(0,e.cash)*0.02){
+      e.positions.push({productId:id,market:id,side:prior.side,contracts:1,contractSize:size,entry,stop:prior.side==='LONG'?entry-stopDistance:entry+stopDistance,target:prior.side==='LONG'?entry+targetDistance:entry-targetDistance,marginUsd:money(margin),entryTime:bar.time,signalTime:prior.time,strategy});
      }
+    }
+    const side=edithSignal(bars,bars.length-1,strategy);
+    if(side==='LONG'||side==='SHORT')e.pending[id]={productId:id,side,time:bar.time,strategy};
    }
-   const side=edithSignal(bars,bars.length-1,strategy);
-   if(side==='LONG'||side==='SHORT')state.signals.push({productId:id,side,time:bar.time,strategy});
    state.health[id]='OK';
   }catch(e){state.health[id]='ERROR: '+String(e.message).slice(0,100);}}
   state.scans++;state.lastRun=new Date(now()).toISOString();state.signals=state.signals.slice(-100);state.trades=state.trades.slice(-500);await save();return snapshot();
