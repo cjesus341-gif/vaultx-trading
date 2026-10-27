@@ -7,6 +7,8 @@ export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','D
 export const EDITH_RATIOS=[1.5,2,2.78,3,5,10];
 const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=6, BAR_MS=300000;
 const FIXED_STOP_FRACTION=.0037, WIDE_STOP_FRACTION=.0074, FIXED_REWARD_RISK=2.78, FIXED_LABEL='fixed-0.37pct-', WIDE_LABEL='fixed-0.74pct-';
+// Separate, strictly paper-only margin simulation; $3 posted margin creates $9 notional.
+const LEVERAGE_ACCOUNT_USD=300, LEVERAGE_MARGIN_USD=3, LEVERAGE_MULT=3, LEVERAGE_LABEL='paper-3x-3usd-fixed-0.74pct-';
 // Preserve the existing research journal and leaderboard; changing the stop applies to fresh entries only.
 const EDITH_PAPER_RULESET='atr3-reset-2026-10-25';
 // All paper variants use the same ATR-based stop. Cost-aware variants retain their separate fee gates.
@@ -20,14 +22,15 @@ const experimentalSlip=()=>{const n=Number(process.env.EDITH_PAPER_EXPERIMENT_SL
 const trueAtr=c=>{const last=c.slice(-15);if(last.length<15)return NaN;let total=0;for(let i=1;i<last.length;i++){const x=last[i],prev=last[i-1];total+=Math.max(x.high-x.low,Math.abs(x.high-prev.close),Math.abs(x.low-prev.close));}return total/14;};
 const clone=x=>JSON.parse(JSON.stringify(x));
 const finite=n=>Number.isFinite(Number(n));
-const variantKey=(s,r,mode='ATR')=>`${mode==='FIXED'?FIXED_LABEL:mode==='FIXED_WIDE'?WIDE_LABEL:''}${s}@${r}:1`;
-const blankVariant=(s,r,mode='ATR')=>({strategy:s,rewardRisk:r,stopMode:mode,cash:START_CAPITAL,realizedUsd:0,peakEquity:START_CAPITAL,maxDrawdownUsd:0,
+const variantKey=(s,r,mode='ATR')=>`${mode==='FIXED'?FIXED_LABEL:mode==='FIXED_WIDE'?WIDE_LABEL:mode==='PAPER_LEVERAGED'?LEVERAGE_LABEL:''}${s}@${r}:1`;
+const blankVariant=(s,r,mode='ATR')=>({strategy:s,rewardRisk:r,stopMode:mode,cash:mode==='PAPER_LEVERAGED'?LEVERAGE_ACCOUNT_USD:START_CAPITAL,realizedUsd:0,peakEquity:mode==='PAPER_LEVERAGED'?LEVERAGE_ACCOUNT_USD:START_CAPITAL,maxDrawdownUsd:0,
  completed:0,wins:0,tpHits:0,tpFeeLosses:0,tpTrackedClosed:0,grossProfits:0,grossLosses:0,feesUsd:0,pending:null,position:null,trades:[]});
 // Fixed-rate paper variants are parallel experiments: same entry signals, different exit levels.
 const variants=()=>Object.fromEntries(EDITH_STRATEGIES.flatMap(s=>[
  ...EDITH_RATIOS.map(r=>[variantKey(s,r),blankVariant(s,r)]),
  [variantKey(s,FIXED_REWARD_RISK,'FIXED'),blankVariant(s,FIXED_REWARD_RISK,'FIXED')],
-  [variantKey(s,FIXED_REWARD_RISK,'FIXED_WIDE'),blankVariant(s,FIXED_REWARD_RISK,'FIXED_WIDE')]
+  [variantKey(s,FIXED_REWARD_RISK,'FIXED_WIDE'),blankVariant(s,FIXED_REWARD_RISK,'FIXED_WIDE')],
+ [variantKey(s,FIXED_REWARD_RISK,'PAPER_LEVERAGED'),blankVariant(s,FIXED_REWARD_RISK,'PAPER_LEVERAGED')]
 ]));
 function validCandle(c){return finite(c.open)&&finite(c.high)&&finite(c.low)&&finite(c.close)&&finite(c.volume)&&Number(c.low)>0&&Number(c.open)>0&&Number(c.high)>=Math.max(Number(c.open),Number(c.close))&&Number(c.low)<=Math.min(Number(c.open),Number(c.close))&&Number(c.volume)>=0&&finite(Date.parse(c.time));}
 function normalize(c){return {time:String(c.time),open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};}
@@ -45,7 +48,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
    // Add new experiment IDs without altering existing fills, positions or watermarks. No backfill.
    for(const [k,initial] of Object.entries(expected)){
     if(!doc.variants[k]){
-     if(!['FIXED','FIXED_WIDE'].includes(initial.stopMode)&&initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
+     if(!['FIXED','FIXED_WIDE','PAPER_LEVERAGED'].includes(initial.stopMode)&&initial.rewardRisk!==2.78&&!EDITH_RATIOS.slice(-2).includes(initial.rewardRisk)&&!initial.strategy.startsWith('ema-adx-rsi')&&!initial.strategy.startsWith(EXP_PREFIX))throw Error('Missing EDITH base strategy: '+k);
      doc.variants[k]=initial;upgraded=true;
     }else if(!finite(doc.variants[k].cash))throw Error('Invalid EDITH strategy: '+k);
     // Upgrade existing paper records without resetting trades or changing signals.
@@ -93,8 +96,8 @@ export function createEdithForward({filePath,now=Date.now}={}){
  }
  async function persist(){await mkdir(path.dirname(filePath),{recursive:true});const tmp=filePath+'.tmp';await writeFile(tmp,JSON.stringify(state,null,2),{mode:0o600});await rename(tmp,filePath);}
  function summary(){if(!state)return {initialized:false,paperOnly:true,canTradeRealMoney:false};
-  const ranked=Object.entries(state.variants).map(([name,v])=>({name,strategy:v.strategy,stopMode:v.stopMode||'ATR',fixedStopPercent:v.stopMode==='FIXED'?FIXED_STOP_FRACTION*100:v.stopMode==='FIXED_WIDE'?WIDE_STOP_FRACTION*100:null,targetToStopRatio:v.rewardRisk,
-   netPnlUsd:v.realizedUsd,returnPct:100*v.realizedUsd/START_CAPITAL,winRate:v.completed?v.wins/v.completed:null,
+  const ranked=Object.entries(state.variants).map(([name,v])=>({name,strategy:v.strategy,stopMode:v.stopMode||'ATR',fixedStopPercent:v.stopMode==='FIXED'?FIXED_STOP_FRACTION*100:['FIXED_WIDE','PAPER_LEVERAGED'].includes(v.stopMode)?WIDE_STOP_FRACTION*100:null,targetToStopRatio:v.rewardRisk,
+   netPnlUsd:v.realizedUsd,accountBalanceUsd:v.cash,startingBalanceUsd:v.stopMode==='PAPER_LEVERAGED'?LEVERAGE_ACCOUNT_USD:START_CAPITAL,marginPerTradeUsd:v.stopMode==='PAPER_LEVERAGED'?LEVERAGE_MARGIN_USD:null,leverage:v.stopMode==='PAPER_LEVERAGED'?LEVERAGE_MULT:1,returnPct:100*v.realizedUsd/(v.stopMode==='PAPER_LEVERAGED'?LEVERAGE_ACCOUNT_USD:START_CAPITAL),winRate:v.completed?v.wins/v.completed:null,
    tpHitRate:v.tpTrackedClosed?v.tpHits/v.tpTrackedClosed:null,tpHits:v.tpHits||0,tpFeeLosses:v.tpFeeLosses||0,tpTrackedClosed:v.tpTrackedClosed||0,tpHistoryPartial:!!v.tpHistoryPartial,
    profitFactor:v.grossLosses>0?v.grossProfits/v.grossLosses:null,maxDrawdownUsd:v.maxDrawdownUsd,
    trades:v.completed,openPosition:v.position?{market:v.position.market,side:v.position.side,entry:v.position.entry,stop:v.position.stop,target:v.position.target,needsReview:!!v.position.dataGap,recoveryStatus:v.position.dataGap?(v.position.recoveryReason||'Awaiting complete price history'):'CLEAR'}:null,
@@ -104,10 +107,10 @@ export function createEdithForward({filePath,now=Date.now}={}){
   ranked.sort((a,b)=>b.netPnlUsd-a.netPnlUsd);
   return {initialized:true,paperOnly:true,canTradeRealMoney:false,enabled:state.enabled,lastRun:state.lastRun,
    scanCount:state.scanCount,lastError:state.lastError,lastScanMarketsProcessed:state.lastScanMarketsProcessed??null,markets:EDITH_MARKETS,ratios:EDITH_RATIOS,
-   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,fixedStopPercent:FIXED_STOP_FRACTION*100,wideFixedStopPercent:WIDE_STOP_FRACTION*100,fixedRewardRisk:FIXED_REWARD_RISK,paperRuleset:EDITH_PAPER_RULESET},
+   assumptions:{startingCapitalUsd:START_CAPITAL,riskFraction:RISK_FRACTION,maxNotionalUsd:MAX_NOTIONAL,feeRatePerSide:FEE,slippagePerSide:SLIP,stopAtrMultiplier:STOP_MULT,fixedStopPercent:FIXED_STOP_FRACTION*100,wideFixedStopPercent:WIDE_STOP_FRACTION*100,fixedRewardRisk:FIXED_REWARD_RISK,paperLeverage:{startingBalanceUsd:LEVERAGE_ACCOUNT_USD,marginPerTradeUsd:LEVERAGE_MARGIN_USD,leverage:LEVERAGE_MULT,notionalUsd:LEVERAGE_MARGIN_USD*LEVERAGE_MULT,stopPercent:WIDE_STOP_FRACTION*100,rewardRisk:FIXED_REWARD_RISK},paperRuleset:EDITH_PAPER_RULESET},
    experimentAssumptions:{feeRatePerSide:experimentalFee(),slippagePerSide:experimentalSlip(),atrStopMultiplier:EXP_STOP_ATR_MULT,minNetRewardRisk:EXP_MIN_NET_RR,maxCostFractionOfGrossTarget:EXP_MAX_COST_SHARE,legacyUnchanged:true},
    strategies:ranked,recentTrades:state.trades.slice(-100).reverse(),marketHealth:state.marketHealth||{},
-   limitations:'Forward paper estimates, not live orders. Short trades are simulated. OHLC cannot determine intrabar order; stop wins ties. No borrow/funding, liquidity or true order-book fills. Ranking alone never authorizes live trading.'};
+   limitations:'Leverage branch is a simplified margin exposure comparison: no liquidation, funding, maintenance-margin or borrow modeling. Forward paper estimates, not live orders. Short trades are simulated. OHLC cannot determine intrabar order; stop wins ties. No borrow/funding, liquidity or true order-book fills. Ranking alone never authorizes live trading.'};
  }
  function closeTrade(v,bar){
   const p=v.position;if(!p)return;
@@ -124,6 +127,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   v.cash+=net;v.realizedUsd+=net;v.completed++;v.wins+=net>0?1:0;v.tpTrackedClosed=(v.tpTrackedClosed||0)+1;if(targeted&&!stopped){v.tpHits=(v.tpHits||0)+1;if(net<=0)v.tpFeeLosses=(v.tpFeeLosses||0)+1;}v.grossProfits+=Math.max(0,net);v.grossLosses+=Math.max(0,-net);v.feesUsd+=exitFee;
   v.peakEquity=Math.max(v.peakEquity,v.cash);v.maxDrawdownUsd=Math.max(v.maxDrawdownUsd,v.peakEquity-v.cash);
   const trade={variant:variantKey(v.strategy,v.rewardRisk,v.stopMode),strategy:v.strategy,stopMode:v.stopMode||'ATR',rewardRisk:v.rewardRisk,market:p.market,
+   ...(v.stopMode==='PAPER_LEVERAGED'?{paperLeverage:LEVERAGE_MULT,postedMarginUsd:LEVERAGE_MARGIN_USD,startingAccountBalanceUsd:LEVERAGE_ACCOUNT_USD,accountBalanceAfterUsd:v.cash,marginModel:'simplified, no funding or liquidation simulation'}:{}),
    side:p.side,signalTime:p.signalTime,entryTime:p.entryTime,exitTime:bar.time,entry:p.entry,exit,
    stop:p.stop,target:p.target,quantity:p.qty,notionalUsd:p.entry*p.qty,feesUsd:p.entryFee+exitFee,grossPnlUsd:gross,netPnlUsd:net,
    feeRatePerSide:fee,slippagePerSide:slip,triggerPrice:raw,exitSlippageUsd:Math.abs(exit-raw)*p.qty,
@@ -150,7 +154,7 @@ export function createEdithForward({filePath,now=Date.now}={}){
   // True range captures gaps between candles; apply exactly the same multiple
   // to every paper strategy, with targets derived from each variant's ratio.
   // Six ATR rather than three for NEW paper fills. Existing positions retain their levels.
-  const stopDistance=v.stopMode==='FIXED'?entry*FIXED_STOP_FRACTION:v.stopMode==='FIXED_WIDE'?entry*WIDE_STOP_FRACTION:p.atr*STOP_MULT;
+  const stopDistance=v.stopMode==='FIXED'?entry*FIXED_STOP_FRACTION:['FIXED_WIDE','PAPER_LEVERAGED'].includes(v.stopMode)?entry*WIDE_STOP_FRACTION:p.atr*STOP_MULT;
   if(!(stopDistance>0&&entry>stopDistance&&entry>0))return;
   const stop=p.side==='LONG'?entry-stopDistance:entry+stopDistance;
   const target=p.side==='LONG'?entry+stopDistance*v.rewardRisk:entry-stopDistance*v.rewardRisk;
@@ -176,7 +180,11 @@ export function createEdithForward({filePath,now=Date.now}={}){
   // Use the exact modelled adverse stop exit in sizing, including round-trip fees.
   const stopExit=stop*(p.side==='LONG'?1-slip:1+slip);
   const netLossPerUnit=(p.side==='LONG'?entry-stopExit:stopExit-entry)+entry*fee+stopExit*fee;
-  const qty=Math.min(MAX_NOTIONAL/entry,riskDollars/netLossPerUnit);
+  // The leveraged paper branch posts $3 of a separate $300 virtual account.
+  // Do not borrow or send exchange orders. Reserve only one $3-margin position per variant.
+  const levered=v.stopMode==='PAPER_LEVERAGED';
+  const leveragedNotional=LEVERAGE_MARGIN_USD*LEVERAGE_MULT;
+  const qty=levered?(v.cash>=LEVERAGE_MARGIN_USD&&netLossPerUnit>0?leveragedNotional/entry:0):Math.min(MAX_NOTIONAL/entry,riskDollars/netLossPerUnit);
   if(!(qty>0&&Number.isFinite(qty)&&netLossPerUnit>0))return;
   const entryFee=qty*entry*fee;
   v.feesUsd+=entryFee;
