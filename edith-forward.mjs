@@ -218,7 +218,7 @@ export function createEdithForward({filePath,now=Date.now,paperTimeframeMinutes=
       entryMs>=latestMs||startMs>=latestMs){
     p.recoveryReason='Recovery timestamps invalid: position remains quarantined';unresolved++;continue;
    }
-   const check=verifyCandleCoverage(raw,start,latest);
+   const check=verifyCandleCoverage(raw,start,latest,BAR_MS);
    if(!check.ok){p.recoveryReason=check.reason;unresolved++;continue;}
    p.dataGap=false;p.recoveredPriceGap=true;p.recoveryReason=null;
    // Historical candles occurred after the paper entry was actually recorded.
