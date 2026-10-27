@@ -811,6 +811,21 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin',
         'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://s3.tradingview.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src https://s.tradingview.com https://www.tradingview.com https://*.tradingview.com; frame-ancestors 'self'; form-action 'self'"});res.end(html);return true;
     }
+    if(route==='/api/admin/edith/perpetual-markets'){
+      if(req.method!=='GET'){send(405,{error:'Method not allowed'});return true;}
+      await ready;
+      const operator=sessionFor(req);
+      if(!operator||operator.user.role!=='admin'){send(operator?403:401,{error:'Administrator access required'});return true;}
+      if(!coinbaseConfigured){send(503,{error:'Coinbase credentials unavailable'});return true;}
+      try{
+        const raw=await coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',get_all_products:true,limit:250}});
+        const list=Array.isArray(raw?.products)?raw.products:[];
+        const products=list.map(p=>({productId:String(p.product_id||''),displayName:String(p.display_name||''),status:String(p.status||''),tradingDisabled:!!p.trading_disabled,contractSize:String(p.future_product_details?.contract_size||''),contractRootUnit:String(p.future_product_details?.contract_root_unit||''),contractExpiryType:String(p.future_product_details?.contract_expiry_type||''),maxLeverage:String(p.future_product_details?.perpetual_details?.max_leverage||''),venue:String(p.product_venue||'')}))
+         .filter(p=>p.productId&&p.contractSize&&/PERP/i.test(p.contractExpiryType+' '+p.displayName+' '+p.productId));
+        send(200,{paperOnly:true,source:'Coinbase authenticated products API',checkedAt:new Date(now()).toISOString(),products,returnedCount:list.length,warning:'Availability does not establish account eligibility. No paper entries activated.'});
+      }catch(e){send(502,{error:'Coinbase product catalog unavailable',detail:String(e.message||e)});}
+      return true;
+    }
     if(route==='/api/admin/u/status'){
       if(req.method!=='GET'){send(405,{error:'Method not allowed'});return true;}
       await ready;
