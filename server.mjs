@@ -475,15 +475,15 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
   });
   // EDITH v0.2: standalone forward-paper laboratory. Read-only Coinbase candles.
   // No trade, preview, transfer, or execution endpoints are used by this engine.
-  const edithForward=createEdithForward({filePath:process.env.DATA_DIR?path.join(dataDir,'edith-forward-v36.json'):null,now});
+  const edithForward=createEdithForward({filePath:process.env.DATA_DIR?path.join(dataDir,'edith-forward-15m-focused.json'):null,now,paperTimeframeMinutes:15,focused:true});
   const edithEnabled=process.env.EDITH_FORWARD_PAPER_ENABLED==='true'&&!!process.env.DATA_DIR;
   async function edithPaperTick(){
     if(!edithEnabled||!coinbaseConfigured)return;
     return edithForward.tick(async id=>{
       if(!EDITH_MARKETS.includes(id))throw Error('Unknown paper market');
-      const end=Math.floor(now()/300000)*300,start=end-300*125;
+      const end=Math.floor(now()/900000)*900,start=end-900*125;
       const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
-        {query:{start:String(start),end:String(end),granularity:'FIVE_MINUTE',limit:'125'}});
+        {query:{start:String(start),end:String(end),granularity:'FIFTEEN_MINUTE',limit:'125'}});
       if(!Array.isArray(data?.candles))throw Error('Coinbase candles unavailable for '+id);
       return data.candles.filter(c=>Number(c.start)<end).map(c=>({time:new Date(Number(c.start)*1000).toISOString(),
         open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)}));
@@ -491,19 +491,19 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       readProduct:productId=>coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(productId)),
       readBook:productId=>coinbaseJson('GET','/api/v3/brokerage/best_bid_ask',{query:{product_ids:productId}})
     }),async (id,fromExclusive,throughInclusive)=>{
-      // EDITH ONLY: read historical completed 5m candles after an already
+      // EDITH ONLY: read historical completed 15m candles after an already
       // recorded paper entry. No new entries, trading or exchange mutations.
       if(!EDITH_MARKETS.includes(id))throw Error('Unknown EDITH recovery market');
       const fromMs=Date.parse(fromExclusive), throughMs=Date.parse(throughInclusive);
       if(!Number.isFinite(fromMs)||!Number.isFinite(throughMs)||throughMs<=fromMs)
         throw Error('Recovery timestamps invalid for '+id+' (position remains quarantined)');
-      const first=Math.floor(fromMs/300000)*300+300;
-      const last=Math.floor(throughMs/300000)*300;
-      const requestedBars=(last-first)/300+1;
+      const first=Math.floor(fromMs/900000)*900+900;
+      const last=Math.floor(throughMs/900000)*900;
+      const requestedBars=(last-first)/900+1;
       // EDITH-only bounded backfill. The loop below already pages Coinbase history
       // in 90-candle windows; the old seven-day TOTAL limit incorrectly rejected
       // older but otherwise recoverable positions before pagination could run.
-      const maxBars=30*24*12; // Up to 30 days, never unbounded history requests.
+      const maxBars=30*24*4; // Up to 30 days, never unbounded history requests.
       if(!Number.isSafeInteger(first)||!Number.isSafeInteger(last)||
          !Number.isSafeInteger(requestedBars)||requestedBars<1||requestedBars>maxBars){
         console.warn('[EDITH recovery]',id,'out-of-range',
@@ -515,17 +515,17 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       const barsByTime=new Map();
       // Overlapping requests tolerate Coinbase boundary conventions and
       // pagination caps. We NEVER synthesize an OHLC candle.
-      for(let chunkStart=first;chunkStart<=last;chunkStart+=90*300){
-        const chunkLast=Math.min(last,chunkStart+89*300);
+      for(let chunkStart=first;chunkStart<=last;chunkStart+=90*900){
+        const chunkLast=Math.min(last,chunkStart+89*900);
         let fetched=false;
         for(let attempt=0;attempt<2&&!fetched;attempt++){
           try{
             const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
-              {query:{start:String(chunkStart-300),end:String(chunkLast+600),granularity:'FIVE_MINUTE',limit:'100'}});
+              {query:{start:String(chunkStart-900),end:String(chunkLast+1800),granularity:'FIFTEEN_MINUTE',limit:'100'}});
             if(!Array.isArray(data?.candles))throw Error('Candle response missing');
             for(const c of data.candles){
               const t=Number(c.start);
-              if(!Number.isInteger(t)||t<chunkStart||t>chunkLast||t%300!==0)continue;
+              if(!Number.isInteger(t)||t<chunkStart||t>chunkLast||t%900!==0)continue;
               const bar={time:new Date(t*1000).toISOString(),open:Number(c.open),
                 high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};
               const previous=barsByTime.get(t);
