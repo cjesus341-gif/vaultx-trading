@@ -3,7 +3,7 @@ import {readFile,writeFile,rename,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
 import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
-export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD'];
+export const EDITH_MARKETS=['BTC-USD','ETH-USD','SOL-USD','XRP-USD','ADA-USD','DOGE-USD','LINK-USD','AVAX-USD','LTC-USD','SUI-USD','NEAR-USD','ZEC-USD','HYPE-USD','SAND-USD','DOT-USD','XLM-USD','HBAR-USD','ALGO-USD','GRT-USD','XTZ-USD','UNI-USD','AAVE-USD','CRV-USD','COMP-USD','1INCH-USD','MANA-USD','GALA-USD','IMX-USD','SHIB-USD','PEPE-USD','BONK-USD','ARB-USD','OP-USD','ONDO-USD','INJ-USD','SEI-USD','FET-USD','BCH-USD','VET-USD','WIF-USD','FLOKI-USD'];
 export const EDITH_RATIOS=[1.5,2,2.78,3,5,10];
 const START_CAPITAL=1000, RISK_FRACTION=.005, MAX_NOTIONAL=100, FEE=.009, SLIP=.001, STOP_MULT=6, BAR_MS=300000;
 const FIXED_STOP_FRACTION=.0037, WIDE_STOP_FRACTION=.0074, FIXED_REWARD_RISK=2.78, FIXED_LABEL='fixed-0.37pct-', WIDE_LABEL='fixed-0.74pct-';
