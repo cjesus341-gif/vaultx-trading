@@ -1,6 +1,7 @@
 import {evaluateLongCandidates} from './friday-v41-selection.mjs';
 import {readEdithQuote} from './edith-quote.mjs';
 import {createEdithForward,EDITH_MARKETS} from './edith-forward.mjs';
+import {createEdithPerpScanner} from './edith-cde-perp-forward.mjs';
 import {uStatus} from './u-forex-engine.mjs';
 import {compareEdithStrategies} from './edith-paper-lab.mjs';
 import {selectDualSpotLong} from './friday-dual-live-selector.mjs';
@@ -479,6 +480,23 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
   const edithForward=createEdithForward({filePath:process.env.DATA_DIR?path.join(dataDir,'edith-forward-15m-focused.json'):null,now,paperTimeframeMinutes:15,focused:true});
   // Legacy spot-based EDITH scanner retired for the perpetuals-only transition.
   // Existing journal remains on disk as an archive; never load or mutate it.
+  const edithPerp=process.env.DATA_DIR?createEdithPerpScanner({
+    filePath:path.join(dataDir,'edith-cde-perp-v1.json'),now,
+    fetchProducts:()=>coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',get_all_products:true,limit:250}}),
+    fetchCandles:async id=>{
+      const end=Math.floor(now()/900000)*900,start=end-900*125;
+      const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
+        {query:{start:String(start),end:String(end),granularity:'FIFTEEN_MINUTE',limit:'125'}});
+      return (data.candles||[]).filter(c=>Number(c.start)<end).map(c=>({time:new Date(Number(c.start)*1000).toISOString(),
+        open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)}));
+    }
+  }):null;
+  const edithPerpEnabled=!!edithPerp&&coinbaseConfigured;
+  if(edithPerpEnabled){
+    const run=()=>edithPerp.tick().catch(e=>console.warn('[EDITH CDE paper]',String(e.message||e).slice(0,180)));
+    const timer=setInterval(run,300000);timer.unref?.();
+    setTimeout(run,15000).unref?.();
+  }
   const edithEnabled=false;
   async function edithPaperTick(){
     if(!edithEnabled||!coinbaseConfigured)return;
@@ -970,6 +988,7 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
         return true;
       }
       if(route==='/api/admin/friday/edith-forward'&&req.method==='GET'){
+        if(edithPerpEnabled){try{send(200,await edithPerp.status());}catch(e){send(503,{paperOnly:true,enabled:false,error:String(e.message).slice(0,160)});}return true;}
         if(!edithEnabled){send(200,{paperOnly:true,canTradeRealMoney:false,enabled:false,
           message:'Legacy spot scanner retired. Fresh Coinbase perpetual-only paper epoch awaits verified margin and contract feed.',markets:[],strategies:[],recentTrades:[],openPositions:[],pendingSignals:[],startingBalanceUsd:300,accountBalanceUsd:300,completedTrades:0,realizedPnlUsd:0,leaderboardReset:true,previousJournalArchived:true});return true;}
         try{send(200,await edithForward.status());}
