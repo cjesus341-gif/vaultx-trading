@@ -971,7 +971,7 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       }
       if(route==='/api/admin/friday/edith-forward'&&req.method==='GET'){
         if(!edithEnabled){send(200,{paperOnly:true,canTradeRealMoney:false,enabled:false,
-          message:'Set EDITH_FORWARD_PAPER_ENABLED=true and use persistent DATA_DIR to enable independent forward paper trading.'});return true;}
+          message:'Legacy spot scanner retired. Fresh Coinbase perpetual-only paper epoch awaits verified margin and contract feed.',markets:[],strategies:[],recentTrades:[],openPositions:[],pendingSignals:[],startingBalanceUsd:300,accountBalanceUsd:300,completedTrades:0,realizedPnlUsd:0,leaderboardReset:true,previousJournalArchived:true});return true;}
         try{send(200,await edithForward.status());}
         catch(e){send(503,{paperOnly:true,enabled:false,error:'EDITH forward journal unavailable: '+String(e.message).slice(0,160)});}
         return true;
