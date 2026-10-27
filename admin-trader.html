@@ -514,7 +514,9 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
   stat('Market',d.marketType||'Legacy');stat('Paper start','$300 per strategy');stat('Timeframe',String(d.paperTimeframeMinutes||5)+'M');stat('Forward scans',String(d.scanCount??0));stat('Experiments',String(strategies.length));stat('Closed trades¹',String(count));
   stat('Healthy markets',Object.values(health).filter(x=>x.status==='OK').length+' / '+(d.markets?.length||9));
   forwardOut.textContent='EDITH · PAPER ONLY · Last scan '+(d.lastRun?new Date(d.lastRun).toLocaleString():'not yet')+'. '+(d.lastScanMarketsProcessed??'—')+' markets updated in last scan. No real orders.';
-  const opened=strategies.filter(x=>x.openPosition);edithOpen.textContent=opened.length?opened.map(x=>x.name+' · '+x.openPosition.market+' '+x.openPosition.side+(x.openPosition.needsReview?' · NEEDS REVIEW: missing-price gap':'' )).join('\n'):'No active paper positions.';edithOpen.style.whiteSpace='pre-line';
+  const opened=strategies.flatMap(x=>(x.openPositions|| (x.openPosition?[x.openPosition]:[])).map(p=>({name:x.name,p})));
+  edithOpen.textContent=opened.length?opened.map(x=>x.name+' · '+(x.p.market||x.p.productId)+' '+x.p.side+(x.p.dataGap?' · NEEDS REVIEW: missing candles':'')).join('\\n'):'No active paper positions.';
+  edithOpen.style.whiteSpace='pre-line';
   const warning=document.createElement('p');warning.className='small';warning.textContent=warn.length? 'Data warnings: '+warn.map(([m,x])=>m+' ('+x.status+')').join(', ')+'. Other markets continue independently.':'All last-checked markets reported healthy.';
   edithHealth.append(warning);
   if(warn.length){const details=document.createElement('details');const su=document.createElement('summary');su.textContent='View data warnings';details.append(su);for(const [m,x] of warn){const p=document.createElement('p');p.className='small';p.textContent=m+': '+(x.reason||x.status)+(x.lastSuccessAt?' · Last good: '+new Date(x.lastSuccessAt).toLocaleString():' · No successful quote since tracking started');details.append(p);}edithHealth.append(details);}
