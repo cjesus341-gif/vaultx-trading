@@ -1,0 +1,54 @@
+// EDITH CDE perpetual-only, forward paper scanner. No Coinbase write endpoints.
+import {readFile,writeFile,rename} from 'node:fs/promises';
+import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
+const WATCH=['BTC','ETH','SOL','XRP','NEAR','HYPE','ADA','DOGE','SUI','BNB','LINK','AVAX','AAVE','LTC','HBAR','XLM','DOT','BCH','ZEC','ENA','ONDO'];
+const money=n=>Math.round(n*1e6)/1e6;
+export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=Date.now}){
+ let state=null,busy=null;
+ async function init(){if(state)return;
+  try{const v=JSON.parse(await readFile(filePath,'utf8'));if(v.schema!==1||!Array.isArray(v.trades)||!Array.isArray(v.positions))throw Error('Invalid journal');state=v;}
+  catch(e){if(e.code!=='ENOENT')throw e;state={schema:1,startedAt:new Date(now()).toISOString(),cash:300,positions:[],trades:[],watermarks:{},signals:[],health:{},scans:0};await save();}
+ }
+ async function save(){const tmp=filePath+'.tmp';await writeFile(tmp,JSON.stringify(state));await rename(tmp,filePath);}
+ const snapshot=()=>({paperOnly:true,canTradeRealMoney:false,enabled:true,marketType:'COINBASE_US_PERPETUAL',startingBalanceUsd:300,accountBalanceUsd:money(state.cash),realizedPnlUsd:money(state.cash-300),openPositions:state.positions,recentTrades:state.trades.slice(-50).reverse(),leaderboard:EDITH_STRATEGIES.map(strategy=>{const t=state.trades.filter(x=>x.strategy===strategy);return {strategy,trades:t.length,netPnlUsd:money(t.reduce((a,b)=>a+b.netPnlUsd,0)),wins:t.filter(x=>x.netPnlUsd>0).length};}),recentSignals:state.signals.slice(-20).reverse(),marketHealth:state.health,lastRun:state.lastRun,scanCount:state.scans,limitations:'Indicative 3x margin, estimated fees and slippage; Coinbase account-specific margin, funding and liquidation not simulated. Whole contracts only. Only complete 15m candles; conservative stop-first OHLC. No live orders.'});
+ async function status(){await init();return snapshot();}
+ async function tick(){if(busy)return busy;busy=(async()=>{await init();
+  const catalog=await fetchProducts(),products=(catalog.products||[]).filter(p=>WATCH.some(root=>p.product_id===root+'-PERP'||p.product_id===root+'-USD-PERP')&&!p.trading_disabled&&Number(p.future_product_details?.contract_size)>0&&!/USDC-PERPETUAL/i.test(p.product_id));
+  for(const p of products){const id=p.product_id;try{
+   const bars=(await fetchCandles(id)).filter(b=>Number.isFinite(b.close)&&b.close>0).sort((a,b)=>a.time.localeCompare(b.time));if(bars.length<70){state.health[id]='INSUFFICIENT_CANDLES';continue;}
+   const last=bars.at(-1),previous=state.watermarks[id];
+   if(!previous){state.watermarks[id]=last.time;state.health[id]='INITIALIZED';continue;}
+   const unseen=bars.filter(b=>b.time>previous);
+   if(unseen.length!==1||Date.parse(unseen[0].time)-Date.parse(previous)!==900000){state.watermarks[id]=last.time;state.health[id]=unseen.length?'RESYNCED_GAP':'WAITING';continue;}
+   const bar=unseen[0];state.watermarks[id]=bar.time;
+   for(const position of [...state.positions].filter(x=>x.productId===id)){
+    const stop=position.side==='LONG'?bar.low<=position.stop:bar.high>=position.stop;
+    const target=position.side==='LONG'?bar.high>=position.target:bar.low<=position.target;
+    if(!stop&&!target)continue;
+    const exit=(stop?position.stop:position.target)*(position.side==='LONG'?0.9995:1.0005);
+    const gross=(position.side==='LONG'?exit-position.entry:position.entry-exit)*position.contractSize;
+    const fees=(position.entry+exit)*position.contractSize*0.0006;
+    const net=money(gross-fees);state.cash=money(state.cash+net);
+    state.trades.push({...position,exit,exitTime:bar.time,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});state.positions=state.positions.filter(x=>x!==position);
+   }
+   const strategy=EDITH_STRATEGIES[0],side=edithSignal(bars,bars.length-1,strategy);
+   if(side==='LONG'||side==='SHORT'){
+    state.signals.push({productId:id,side,time:bar.time,strategy});
+    // Entry on the next newly completed bar, not the signal bar.
+    const prior=state.signals.findLast(x=>x.productId===id&&x.time===previous&&x.strategy===strategy);
+    if(prior&&!state.positions.some(x=>x.productId===id)){
+     const size=Number(p.future_product_details.contract_size),entry=bar.open;
+     const margin=size*entry/3,stopDistance=entry*0.0074,targetDistance=entry*0.0206;
+     const estimatedRisk=size*stopDistance+size*entry*0.0022;
+     const reserved=state.positions.reduce((sum,x)=>sum+x.marginUsd,0);
+     if(margin<=state.cash-reserved&&estimatedRisk<=Math.max(0,state.cash)*0.02){
+      state.positions.push({productId:id,side:prior.side,contracts:1,contractSize:size,entry,stop:prior.side==='LONG'?entry-stopDistance:entry+stopDistance,target:prior.side==='LONG'?entry+targetDistance:entry-targetDistance,marginUsd:money(margin),entryTime:bar.time,strategy,marginModel:'indicative-3x-not-account-verified'});
+     }
+    }
+   }
+   state.health[id]='OK';
+  }catch(e){state.health[id]='ERROR: '+String(e.message).slice(0,100);}}
+  state.scans++;state.lastRun=new Date(now()).toISOString();state.signals=state.signals.slice(-100);state.trades=state.trades.slice(-500);await save();return snapshot();
+ })();try{return await busy;}finally{busy=null;}}
+ return {status,tick};
+}
