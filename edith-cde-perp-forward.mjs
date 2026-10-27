@@ -31,12 +31,10 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
     const net=money(gross-fees);state.cash=money(state.cash+net);
     state.trades.push({...position,exit,exitTime:bar.time,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});state.positions=state.positions.filter(x=>x!==position);
    }
-   const strategy=EDITH_STRATEGIES[0],side=edithSignal(bars,bars.length-1,strategy);
-   if(side==='LONG'||side==='SHORT'){
-    state.signals.push({productId:id,side,time:bar.time,strategy});
-    // Entry on the next newly completed bar, not the signal bar.
-    const prior=state.signals.findLast(x=>x.productId===id&&x.time===previous&&x.strategy===strategy);
-    if(prior&&!state.positions.some(x=>x.productId===id)){
+   const strategy=EDITH_STRATEGIES[0];
+   // Fill only a signal observed in the previous successful scan.
+   const prior=state.signals.findLast(x=>x.productId===id&&x.time===previous&&x.strategy===strategy);
+   if(prior&&!state.positions.some(x=>x.productId===id)){
      const size=Number(p.future_product_details.contract_size),entry=bar.open;
      const margin=size*entry/3,stopDistance=entry*0.0074,targetDistance=entry*0.0206;
      const estimatedRisk=size*stopDistance+size*entry*0.0022;
@@ -44,8 +42,9 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
      if(margin<=state.cash-reserved&&estimatedRisk<=Math.max(0,state.cash)*0.02){
       state.positions.push({productId:id,side:prior.side,contracts:1,contractSize:size,entry,stop:prior.side==='LONG'?entry-stopDistance:entry+stopDistance,target:prior.side==='LONG'?entry+targetDistance:entry-targetDistance,marginUsd:money(margin),entryTime:bar.time,strategy,marginModel:'indicative-3x-not-account-verified'});
      }
-    }
    }
+   const side=edithSignal(bars,bars.length-1,strategy);
+   if(side==='LONG'||side==='SHORT')state.signals.push({productId:id,side,time:bar.time,strategy});
    state.health[id]='OK';
   }catch(e){state.health[id]='ERROR: '+String(e.message).slice(0,100);}}
   state.scans++;state.lastRun=new Date(now()).toISOString();state.signals=state.signals.slice(-100);state.trades=state.trades.slice(-500);await save();return snapshot();
