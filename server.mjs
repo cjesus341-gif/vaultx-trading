@@ -1,6 +1,7 @@
 import {evaluateLongCandidates} from './friday-v41-selection.mjs';
 import {readEdithQuote} from './edith-quote.mjs';
 import {createEdithForward,EDITH_MARKETS} from './edith-forward.mjs';
+import {uStatus} from './u-forex-engine.mjs';
 import {compareEdithStrategies} from './edith-paper-lab.mjs';
 import {selectDualSpotLong} from './friday-dual-live-selector.mjs';
 import {scanFridayMarkets} from './friday-market-scan.mjs';
@@ -809,6 +810,13 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       const html=await readFile(path.join(ROOT,'admin-trader.html'));
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin',
         'Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://s3.tradingview.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src https://s.tradingview.com https://www.tradingview.com https://*.tradingview.com; frame-ancestors 'self'; form-action 'self'"});res.end(html);return true;
+    }
+    if(route==='/api/admin/u/status'){
+      if(req.method!=='GET'){send(405,{error:'Method not allowed'});return true;}
+      await ready;
+      const operator=sessionFor(req);
+      if(!operator||operator.user.role!=='admin'){send(operator?403:401,{error:'Administrator access required'});return true;}
+      send(200,uStatus());return true;
     }
     if(route.startsWith('/api/admin/friday/')){
       if(!['/api/admin/friday/status','/api/admin/friday/control','/api/admin/friday/check','/api/admin/friday/readiness','/api/admin/friday/safety','/api/admin/friday/lifecycle-drill','/api/admin/friday/coinbase-preview','/api/admin/friday/coinbase-order','/api/admin/friday/btc-product','/api/admin/friday/btc-market-price','/api/admin/friday/auto-setup','/api/admin/friday/autopilot','/api/admin/friday/autopilot/control','/api/admin/friday/performance','/api/admin/friday/risk-readiness','/api/admin/friday/portfolio-scope','/api/admin/friday/market-scan','/api/admin/friday/dual-scan','/api/admin/friday/dual-preview','/api/admin/friday/edith-research','/api/admin/friday/edith-forward','/api/admin/friday/v41-readiness'].includes(route)){send(404,{error:'Not found'});return true;}
