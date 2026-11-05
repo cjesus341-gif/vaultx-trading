@@ -481,7 +481,8 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
   // Legacy spot-based EDITH scanner retired for the perpetuals-only transition.
   // Existing journal remains on disk as an archive; never load or mutate it.
   const edithPerp=process.env.DATA_DIR?createEdithPerpScanner({
-    filePath:path.join(dataDir,'edith-cde-perp-v1.json'),now,
+    // New XRP-only experiment journal resets leaderboard without deleting prior results.
+     filePath:path.join(dataDir,'edith-cde-perp-xrp-only-v1.json'),now,
     fetchProducts:()=>coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',get_all_products:true,limit:250}}),
     fetchCandles:async id=>{
       const end=Math.floor(now()/900000)*900,start=end-900*125;
