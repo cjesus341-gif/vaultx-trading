@@ -1,11 +1,12 @@
 // EDITH CDE perpetual-only, forward paper scanner. No Coinbase write endpoints.
 import {readFile,writeFile,rename} from 'node:fs/promises';
 import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
-const WATCH=['BTC','ETH','SOL','XRP','NEAR','HYPE','ADA','DOGE','SUI','BNB','LINK','AVAX','AAVE','LTC','HBAR','XLM','DOT','BCH','ZEC','ENA','ONDO'];
+// Controlled XRP-only paper experiment; other perpetual products are excluded.
+const WATCH=['XRP'];
 const money=n=>Math.round(n*1e6)/1e6;
 // Coinbase US derivatives use CDE codes such as BIP, ETP, not only BTC-PERP IDs.
 // Accept documented perp-style codes with product metadata; never include dated ordinary futures.
-const CDE_PERP_CODES=new Set(['BIP','ETP','SLP','XPP','DOP','ADP','LNP','AVP','LCP','BCP','HEP','XLP','POP','SHP','SUP','AVE','ENA','NER','OND','ZEC']);
+const CDE_PERP_CODES=new Set(['XPP']);
 function isPerpetualWatchProduct(p){
  const d=p?.future_product_details||{},id=String(p?.product_id||''),code=String(d.contract_code||'').toUpperCase().split(/[-_ ]/)[0];
  const named=WATCH.some(root=>id===root+'-PERP'||id===root+'-USD-PERP');
