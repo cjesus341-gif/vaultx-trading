@@ -2,6 +2,7 @@ import {evaluateLongCandidates} from './friday-v41-selection.mjs';
 import {readEdithQuote} from './edith-quote.mjs';
 import {createEdithForward,EDITH_MARKETS} from './edith-forward.mjs';
 import {createEdithPerpScanner} from './edith-cde-perp-forward.mjs';
+import {backtestEdithPerp} from './edith-perp-backtest.mjs';
 import {uStatus} from './u-forex-engine.mjs';
 import {compareEdithStrategies} from './edith-paper-lab.mjs';
 import {selectDualSpotLong} from './friday-dual-live-selector.mjs';
@@ -855,7 +856,7 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       send(200,uStatus());return true;
     }
     if(route.startsWith('/api/admin/friday/')){
-      if(!['/api/admin/friday/status','/api/admin/friday/control','/api/admin/friday/check','/api/admin/friday/readiness','/api/admin/friday/safety','/api/admin/friday/lifecycle-drill','/api/admin/friday/coinbase-preview','/api/admin/friday/coinbase-order','/api/admin/friday/btc-product','/api/admin/friday/btc-market-price','/api/admin/friday/auto-setup','/api/admin/friday/autopilot','/api/admin/friday/autopilot/control','/api/admin/friday/performance','/api/admin/friday/risk-readiness','/api/admin/friday/portfolio-scope','/api/admin/friday/market-scan','/api/admin/friday/dual-scan','/api/admin/friday/dual-preview','/api/admin/friday/edith-research','/api/admin/friday/edith-forward','/api/admin/friday/v41-readiness'].includes(route)){send(404,{error:'Not found'});return true;}
+      if(!['/api/admin/friday/status','/api/admin/friday/control','/api/admin/friday/check','/api/admin/friday/readiness','/api/admin/friday/safety','/api/admin/friday/lifecycle-drill','/api/admin/friday/coinbase-preview','/api/admin/friday/coinbase-order','/api/admin/friday/btc-product','/api/admin/friday/btc-market-price','/api/admin/friday/auto-setup','/api/admin/friday/autopilot','/api/admin/friday/autopilot/control','/api/admin/friday/performance','/api/admin/friday/risk-readiness','/api/admin/friday/portfolio-scope','/api/admin/friday/market-scan','/api/admin/friday/dual-scan','/api/admin/friday/dual-preview','/api/admin/friday/edith-research','/api/admin/friday/edith-perp-backtest','/api/admin/friday/edith-forward','/api/admin/friday/v41-readiness'].includes(route)){send(404,{error:'Not found'});return true;}
       if(!['GET','POST'].includes(req.method)){send(405,{error:'Method not allowed'});return true;}
       if(req.method==='POST'&&!sameOrigin(req)){send(403,{error:'Request origin rejected'});return true;}
       await ready;
@@ -997,6 +998,27 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
         return true;
       }
       // EDITH v0.1: historical paper research only. Never submits Coinbase orders.
+      if(route==='/api/admin/friday/edith-perp-backtest'&&req.method==='GET'){
+        try{
+          if(!coinbaseConfigured){send(503,{error:'Coinbase read access unavailable'});return true;}
+          const catalog=await coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',limit:'250'}});
+          const products=Array.isArray(catalog?.products)?catalog.products:[];
+          const p=products.find(p=>{const d=p.future_product_details||{};return Number(d.contract_size)>0&&(String(d.contract_code||'').toUpperCase().startsWith('XPP')||/^XRP-.*PERP$/i.test(p.product_id||''))&&(d.perpetual_details!=null||/PERP/i.test(String(d.contract_display_name||'')+' '+String(d.contract_expiry_type||'')+' '+String(p.product_id||'')));});
+          if(!p){send(422,{error:'No verified XRP perpetual contract found; spot substitution prohibited'});return true;}
+          const end=Math.floor(now()/900000)*900,span=240*900,all=[];
+          // Explicit bounded retrieval. Do not claim this is all available history.
+          for(let k=0;k<40;k++){
+            const right=end-k*span,left=right-span;
+            const d=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(p.product_id)+'/candles',{query:{start:String(left),end:String(right),granularity:'FIFTEEN_MINUTE',limit:'240'}});
+            if(!Array.isArray(d?.candles)||!d.candles.length)break;
+            all.push(...d.candles.map(b=>({time:new Date(Number(b.start)*1000).toISOString(),open:Number(b.open),high:Number(b.high),low:Number(b.low),close:Number(b.close),volume:Number(b.volume)})));
+          }
+          const unique=[...new Map(all.map(b=>[b.time,b])).values()].sort((a,b)=>a.time.localeCompare(b.time));
+          const result=backtestEdithPerp(unique,{productId:p.product_id,contractSize:Number(p.future_product_details.contract_size)});
+          send(200,{...result,historyComplete:false,historyLimit:'40 batches of 240 15-minute candles; earlier data may exist'});
+        }catch(e){send(422,{paperOnly:true,error:'Perpetual backtest unavailable: '+String(e.message).slice(0,200)});}
+        return true;
+      }
       if(route==='/api/admin/friday/edith-research'&&req.method==='GET'){
         try{
           const productId=url.searchParams.get('productId')||'BTC-USD';
