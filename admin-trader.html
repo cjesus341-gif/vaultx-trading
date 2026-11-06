@@ -545,7 +545,7 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
    edithOutput.textContent='PAPER ONLY · '+d.productId+' · '+d.candleCount+' 15m candles · '+d.firstCandle+' through '+d.lastCandle+'. Limited retrieval; earlier history may exist. Funding and liquidation NOT modeled. No real orders.';
    for(const x of d.strategies){
     const tr=document.createElement('tr'),pct=n=>n==null?'—':(n*100).toFixed(1)+'%',cash=n=>Number.isFinite(n)?'$'+n.toFixed(2):'—';
-    const cells=[x.name,String(x.trades),cash(x.netPnlUsd),pct(x.winRate),pct(x.lossRate),x.leverage+'×',cash(x.accountBalanceUsd),pct(x.tpHitRate),x.tpHits+' / '+x.tpFeeLosses,cash(x.maxDrawdownUsd),'Historical · unvalidated'];
+    const cells=[x.name,String(x.trades),cash(x.netPnlUsd),pct(x.winRate),pct(x.lossRate),x.leverage+'×',cash(x.accountBalanceUsd),pct(x.tpHitRate),x.tpHits+' / '+x.tpFeeLosses,cash(x.maxDrawdownUsd),('Historical · unvalidated | Signals '+(x.diagnostics?.signalsDetected??'—')+' | Entries '+(x.diagnostics?.entriesOpened??'—')+' | Margin rejects '+(x.diagnostics?.rejectedMargin??'—')+' | Risk rejects '+(x.diagnostics?.rejectedRisk??'—')+(x.diagnostics?.openAtEnd?' | Open at end':''))];
     for(const value of cells){const td=document.createElement('td');td.textContent=value;td.style.padding='8px';td.style.borderBottom='1px solid #ddd';tr.append(td);}
     edithHistoryBoard.append(tr);
    }
