@@ -562,7 +562,7 @@ output.textContent='AUTOMATIC TRADING BLOCKED · Key portfolio type: '+(d.keyPor
    const d=await r.json();if(!r.ok)throw Error(d.error||'CSV import failed');
    edithOutput.textContent='USER-UPLOADED TRADINGVIEW CSV · SOURCE UNVERIFIED · '+d.candleCount+' contiguous 15m candles · '+d.firstCandle+' to '+d.lastCandle+' · '+d.candlesExcludedForGaps+' excluded for gaps. Funding and liquidation NOT modeled. No real orders.';
    for(const x of d.strategies){
-    const tr=document.createElement('tr'),pct=n=>n==null?'—':(n*100).toFixed(1)+'%',cash=n=>Number.isFinite(n)?+n.toFixed(2):'—';
+    const tr=document.createElement('tr'),pct=n=>n==null?'—':(n*100).toFixed(1)+'%',cash=n=>Number.isFinite(n)?String.fromCharCode(36)+n.toFixed(2):'—';
     const cells=[x.name,String(x.trades),cash(x.netPnlUsd),pct(x.winRate),pct(x.lossRate),x.leverage+'×',cash(x.accountBalanceUsd),pct(x.tpHitRate),x.tpHits+' / '+x.tpFeeLosses,cash(x.maxDrawdownUsd),'CSV unverified | Signals '+(x.diagnostics?.signalsDetected??'—')+' | Entries '+(x.diagnostics?.entriesOpened??'—')+' | Risk rejects '+(x.diagnostics?.rejectedRisk??'—')];
     for(const value of cells){const td=document.createElement('td');td.textContent=value;td.style.padding='8px';td.style.borderBottom='1px solid #ddd';tr.append(td);}edithHistoryBoard.append(tr);
    }
