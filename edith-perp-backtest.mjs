@@ -33,7 +33,7 @@ export function backtestEdithPerp(candles,{productId,contractSize,feeRate=0.0006
     const margin=contractSize*entry/leverage;
     const risk=contractSize*entry*(0.0074+2*feeRate+2*slippageRate);
     if(margin>cash)rejectedMargin++;
-    else if(risk>cash*.02)rejectedRisk++;
+    else if(risk>cash*.05)rejectedRisk++;
     else{
      entriesOpened++;
      const distance=entry*.0074,targetDistance=entry*.0206;
@@ -47,5 +47,5 @@ export function backtestEdithPerp(candles,{productId,contractSize,feeRate=0.0006
   const wins=trades.filter(t=>t.netPnlUsd>0).length,tpHits=trades.filter(t=>t.outcome==='TARGET').length;
   return {name:strategy,strategy,diagnostics:{signalsDetected,entriesAttempted,entriesOpened,rejectedMargin,rejectedRisk,openAtEnd:position!=null},trades:trades.length,netPnlUsd:round(cash-startingBalance),accountBalanceUsd:cash,startingBalanceUsd:startingBalance,winRate:trades.length?wins/trades.length:null,lossRate:trades.length?(trades.length-wins)/trades.length:null,leverage,marginPerTradeUsd:null,tpHitRate:trades.length?tpHits/trades.length:null,tpHits,tpFeeLosses:trades.filter(t=>t.outcome==='TARGET'&&t.netPnlUsd<=0).length,maxDrawdownUsd:round(dd),openPosition:position,tradeHistory:trades};
  });
- return {paperOnly:true,marketType:'COINBASE_US_PERPETUAL',productId,firstCandle:bars[0].time,lastCandle:bars.at(-1).time,candleCount:bars.length,strategies,assumptions:{feeRate,slippageRate,contractSize,leverage,fundingMode:'NOT_MODELED',liquidationMode:'NOT_MODELED',entry:'next-candle-open',sameCandleStopTarget:'stop-first'},limitations:'Funding, liquidation and intrabar execution are unavailable; results are indicative, not fully cost-complete. Data gaps cause a hard failure.'};
+ return {paperOnly:true,marketType:'COINBASE_US_PERPETUAL',productId,firstCandle:bars[0].time,lastCandle:bars.at(-1).time,candleCount:bars.length,strategies,assumptions:{feeRate,slippageRate,contractSize,leverage,riskBudgetPct:5,fundingMode:'NOT_MODELED',liquidationMode:'NOT_MODELED',entry:'next-candle-open',sameCandleStopTarget:'stop-first'},limitations:'Funding, liquidation and intrabar execution are unavailable; results are indicative, not fully cost-complete. Data gaps cause a hard failure.'};
 }
