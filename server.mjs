@@ -3,6 +3,7 @@ import {readEdithQuote} from './edith-quote.mjs';
 import {createEdithForward,EDITH_MARKETS} from './edith-forward.mjs';
 import {createEdithPerpScanner} from './edith-cde-perp-forward.mjs';
 import {backtestEdithPerp} from './edith-perp-backtest.mjs';
+import {parseTradingViewCsv} from './tradingview-csv.mjs';
 import {uStatus} from './u-forex-engine.mjs';
 import {compareEdithStrategies} from './edith-paper-lab.mjs';
 import {selectDualSpotLong} from './friday-dual-live-selector.mjs';
@@ -856,7 +857,7 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       send(200,uStatus());return true;
     }
     if(route.startsWith('/api/admin/friday/')){
-      if(!['/api/admin/friday/status','/api/admin/friday/control','/api/admin/friday/check','/api/admin/friday/readiness','/api/admin/friday/safety','/api/admin/friday/lifecycle-drill','/api/admin/friday/coinbase-preview','/api/admin/friday/coinbase-order','/api/admin/friday/btc-product','/api/admin/friday/btc-market-price','/api/admin/friday/auto-setup','/api/admin/friday/autopilot','/api/admin/friday/autopilot/control','/api/admin/friday/performance','/api/admin/friday/risk-readiness','/api/admin/friday/portfolio-scope','/api/admin/friday/market-scan','/api/admin/friday/dual-scan','/api/admin/friday/dual-preview','/api/admin/friday/edith-research','/api/admin/friday/edith-perp-backtest','/api/admin/friday/edith-forward','/api/admin/friday/v41-readiness'].includes(route)){send(404,{error:'Not found'});return true;}
+      if(!['/api/admin/friday/status','/api/admin/friday/control','/api/admin/friday/check','/api/admin/friday/readiness','/api/admin/friday/safety','/api/admin/friday/lifecycle-drill','/api/admin/friday/coinbase-preview','/api/admin/friday/coinbase-order','/api/admin/friday/btc-product','/api/admin/friday/btc-market-price','/api/admin/friday/auto-setup','/api/admin/friday/autopilot','/api/admin/friday/autopilot/control','/api/admin/friday/performance','/api/admin/friday/risk-readiness','/api/admin/friday/portfolio-scope','/api/admin/friday/market-scan','/api/admin/friday/dual-scan','/api/admin/friday/dual-preview','/api/admin/friday/edith-research','/api/admin/friday/edith-perp-backtest','/api/admin/friday/edith-tradingview-csv','/api/admin/friday/edith-forward','/api/admin/friday/v41-readiness'].includes(route)){send(404,{error:'Not found'});return true;}
       if(!['GET','POST'].includes(req.method)){send(405,{error:'Method not allowed'});return true;}
       if(req.method==='POST'&&!sameOrigin(req)){send(403,{error:'Request origin rejected'});return true;}
       await ready;
@@ -995,6 +996,30 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
           message:'Legacy spot scanner retired. Fresh Coinbase perpetual-only paper epoch awaits verified margin and contract feed.',markets:[],strategies:[],recentTrades:[],openPositions:[],pendingSignals:[],startingBalanceUsd:300,accountBalanceUsd:300,completedTrades:0,realizedPnlUsd:0,leaderboardReset:true,previousJournalArchived:true});return true;}
         try{send(200,await edithForward.status());}
         catch(e){send(503,{paperOnly:true,enabled:false,error:'EDITH forward journal unavailable: '+String(e.message).slice(0,160)});}
+        return true;
+      }
+      // Admin-only, read-only CSV research. Uploaded bytes are not saved or forwarded.
+      if(route==='/api/admin/friday/edith-tradingview-csv'&&req.method==='POST'){
+        try{
+          if(!sameOrigin(req)){send(403,{error:'Request origin rejected'});return true;}
+          if(!String(req.headers['content-type']||'').startsWith('text/csv')){send(415,{error:'Upload a TradingView CSV'});return true;}
+          const symbol=String(req.headers['x-chart-symbol']||'').trim().toUpperCase();
+          // Coinbase XPP contract only: do not misprice a different venue's spot/perp.
+          if(symbol!=='XPP-20DEC30-CDE'){send(422,{error:'Only XPP-20DEC30-CDE chart exports are supported. Other symbols cannot use Coinbase contract assumptions.'});return true;}
+          const raw=await new Promise((resolve,reject)=>{
+            let size=0,chunks=[],finished=false;
+            req.on('data',chunk=>{size+=chunk.length;if(size>5_000_000){if(!finished){finished=true;reject(Error('CSV exceeds 5 MB limit'));}}else if(!finished)chunks.push(chunk);});
+            req.on('end',()=>{if(!finished)resolve(Buffer.concat(chunks).toString('utf8'));});
+            req.on('error',reject);
+          });
+          const candles=parseTradingViewCsv(raw),segments=[];let current=[];
+          for(const bar of candles){if(current.length&&Date.parse(bar.time)-Date.parse(current.at(-1).time)!==900000){segments.push(current);current=[];}current.push(bar);}
+          if(current.length)segments.push(current);
+          const latest=segments.sort((a,b)=>b.length-a.length)[0];
+          if(latest.length<70)throw Error('No contiguous 15-minute interval of at least 70 bars');
+          const result=backtestEdithPerp(latest,{productId:symbol,contractSize:500});
+          send(200,{...result,source:'USER_UPLOADED_TRADINGVIEW_CSV',sourceVerified:false,historyComplete:false,candlesRetrieved:candles.length,candlesExcludedForGaps:candles.length-latest.length,coverageWarning:'User-supplied CSV; source symbol and provenance cannot be independently authenticated. Longest contiguous interval used. Not Coinbase API history.'});
+        }catch(e){send(422,{paperOnly:true,error:'CSV backtest unavailable: '+String(e.message).slice(0,180)});}
         return true;
       }
       // EDITH v0.1: historical paper research only. Never submits Coinbase orders.
