@@ -1014,8 +1014,20 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
             all.push(...d.candles.map(b=>({time:new Date(Number(b.start)*1000).toISOString(),open:Number(b.open),high:Number(b.high),low:Number(b.low),close:Number(b.close),volume:Number(b.volume)})));
           }
           const unique=[...new Map(all.map(b=>[b.time,b])).values()].sort((a,b)=>a.time.localeCompare(b.time));
-          const result=backtestEdithPerp(unique,{productId:p.product_id,contractSize:Number(p.future_product_details.contract_size)});
-          send(200,{...result,historyComplete:false,historyLimit:'40 batches of 240 15-minute candles; earlier data may exist'});
+          // Exchange history can contain genuinely missing intervals. Never synthesize candles:
+          // use only the latest uninterrupted 15-minute segment and disclose omitted bars.
+          let segment=[],latest=[];
+          for(const candle of unique){
+            if(segment.length&&Date.parse(candle.time)-Date.parse(segment.at(-1).time)!==900000){
+              if(segment.length>=latest.length)latest=segment;
+              segment=[];
+            }
+            segment.push(candle);
+          }
+          if(segment.length>=latest.length)latest=segment;
+          if(latest.length<70)throw Error('No contiguous 15-minute XRP perpetual history of at least 70 bars; '+unique.length+' candles received');
+          const result=backtestEdithPerp(latest,{productId:p.product_id,contractSize:Number(p.future_product_details.contract_size)});
+          send(200,{...result,historyComplete:false,historyLimit:'40 batches of 240 15-minute candles; earlier data may exist',candlesRetrieved:unique.length,candlesExcludedForGaps:unique.length-latest.length,coverageWarning:latest.length<unique.length?'Only the longest contiguous 15-minute window was simulated; other historical bars excluded due to gaps.':'Historical coverage is bounded; earlier candles may exist.'});
         }catch(e){send(422,{paperOnly:true,error:'Perpetual backtest unavailable: '+String(e.message).slice(0,200)});}
         return true;
       }
