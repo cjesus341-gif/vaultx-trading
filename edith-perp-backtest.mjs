@@ -8,7 +8,7 @@ export function backtestEdithPerp(candles,{productId,contractSize,feeRate=0.0006
  for(let i=0;i<bars.length;i++){const b=bars[i];if(!Number.isFinite(b.open)||!Number.isFinite(b.high)||!Number.isFinite(b.low)||!Number.isFinite(b.close)||!Number.isFinite(b.volume)||b.volume<0||b.low<=0||b.low>Math.min(b.open,b.close)||b.high<Math.max(b.open,b.close)||(i&&Date.parse(b.time)-Date.parse(bars[i-1].time)!==900000))throw Error('Missing or invalid historical 15-minute candles: backtest refused');}
  if(bars.length<70)throw Error('Insufficient contiguous perpetual candles');
  const strategies=EDITH_STRATEGIES.map(strategy=>{
-  let cash=startingBalance,peak=cash,dd=0,position=null,pending=null;const trades=[];
+  let cash=startingBalance,peak=cash,dd=0,position=null,pending=null;const trades=[];let signalsDetected=0,entriesAttempted=0,entriesOpened=0,rejectedMargin=0,rejectedRisk=0;
   for(let i=70;i<bars.length;i++){
    const b=bars[i];
    if(position){
@@ -27,21 +27,25 @@ export function backtestEdithPerp(candles,{productId,contractSize,feeRate=0.0006
     }
    }
    if(pending&&!position){
+    entriesAttempted++;
     // Entry at NEXT candle open, never the signal candle's closing price.
     const entry=b.open*(pending.side==='LONG'?1+slippageRate:1-slippageRate);
     const margin=contractSize*entry/leverage;
     const risk=contractSize*entry*(0.0074+2*feeRate+2*slippageRate);
-    if(margin<=cash&&risk<=cash*.02){
+    if(margin>cash)rejectedMargin++;
+    else if(risk>cash*.02)rejectedRisk++;
+    else{
+     entriesOpened++;
      const distance=entry*.0074,targetDistance=entry*.0206;
      position={productId,strategy,side:pending.side,entry,entryTime:b.time,stop:pending.side==='LONG'?entry-distance:entry+distance,target:pending.side==='LONG'?entry+targetDistance:entry-targetDistance,contractSize,marginUsd:round(margin)};
     }
    }
    pending=null;
    // Signal uses only candles already closed, schedules an entry next bar.
-   if(i<bars.length-1&&!position){const side=edithSignal(bars.slice(0,i+1),i,strategy);if(side==='LONG'||side==='SHORT')pending={side};}
+   if(i<bars.length-1&&!position){const side=edithSignal(bars.slice(0,i+1),i,strategy);if(side==='LONG'||side==='SHORT'){signalsDetected++;pending={side};}}
   }
   const wins=trades.filter(t=>t.netPnlUsd>0).length,tpHits=trades.filter(t=>t.outcome==='TARGET').length;
-  return {name:strategy,strategy,trades:trades.length,netPnlUsd:round(cash-startingBalance),accountBalanceUsd:cash,startingBalanceUsd:startingBalance,winRate:trades.length?wins/trades.length:null,lossRate:trades.length?(trades.length-wins)/trades.length:null,leverage,marginPerTradeUsd:null,tpHitRate:trades.length?tpHits/trades.length:null,tpHits,tpFeeLosses:trades.filter(t=>t.outcome==='TARGET'&&t.netPnlUsd<=0).length,maxDrawdownUsd:round(dd),openPosition:position,tradeHistory:trades};
+  return {name:strategy,strategy,diagnostics:{signalsDetected,entriesAttempted,entriesOpened,rejectedMargin,rejectedRisk,openAtEnd:position!=null},trades:trades.length,netPnlUsd:round(cash-startingBalance),accountBalanceUsd:cash,startingBalanceUsd:startingBalance,winRate:trades.length?wins/trades.length:null,lossRate:trades.length?(trades.length-wins)/trades.length:null,leverage,marginPerTradeUsd:null,tpHitRate:trades.length?tpHits/trades.length:null,tpHits,tpFeeLosses:trades.filter(t=>t.outcome==='TARGET'&&t.netPnlUsd<=0).length,maxDrawdownUsd:round(dd),openPosition:position,tradeHistory:trades};
  });
  return {paperOnly:true,marketType:'COINBASE_US_PERPETUAL',productId,firstCandle:bars[0].time,lastCandle:bars.at(-1).time,candleCount:bars.length,strategies,assumptions:{feeRate,slippageRate,contractSize,leverage,fundingMode:'NOT_MODELED',liquidationMode:'NOT_MODELED',entry:'next-candle-open',sameCandleStopTarget:'stop-first'},limitations:'Funding, liquidation and intrabar execution are unavailable; results are indicative, not fully cost-complete. Data gaps cause a hard failure.'};
 }
