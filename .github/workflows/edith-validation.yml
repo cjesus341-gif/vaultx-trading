@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --ignore-scripts
-      - run: node --test edith-perp-backtest.test.mjs
+      - run: node --test edith-perp-backtest.test.mjs tradingview-csv.test.mjs
       - run: npm test
         continue-on-error: true
       - run: node --check server.mjs
