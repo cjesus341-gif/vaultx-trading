@@ -480,17 +480,68 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
   // EDITH v0.2: standalone forward-paper laboratory. Read-only Coinbase candles.
   // No trade, preview, transfer, or execution endpoints are used by this engine.
   const edithForward=createEdithForward({filePath:process.env.DATA_DIR?path.join(dataDir,'edith-forward-15m-focused.json'):null,now,paperTimeframeMinutes:15,focused:true});
+  async function fetchEdithHistory(id,fromExclusive,throughInclusive){
+    // EDITH ONLY: read historical completed 15m candles after an already
+    // recorded paper entry. No new entries, trading or exchange mutations.
+    const fromMs=Date.parse(fromExclusive), throughMs=Date.parse(throughInclusive);
+    if(!Number.isFinite(fromMs)||!Number.isFinite(throughMs)||throughMs<=fromMs)
+      throw Error('Recovery timestamps invalid for '+id+' (position remains quarantined)');
+    const first=Math.floor(fromMs/900000)*900+900;
+    const last=Math.floor(throughMs/900000)*900;
+    const requestedBars=(last-first)/900+1;
+    // EDITH-only bounded backfill. The loop below already pages Coinbase history
+    // in 90-candle windows; the old seven-day TOTAL limit incorrectly rejected
+    // older but otherwise recoverable positions before pagination could run.
+    const maxBars=30*24*4; // Up to 30 days, never unbounded history requests.
+    if(!Number.isSafeInteger(first)||!Number.isSafeInteger(last)||
+       !Number.isSafeInteger(requestedBars)||requestedBars<1||requestedBars>maxBars){
+      console.warn('[EDITH recovery]',id,'out-of-range',
+        'from='+new Date(fromMs).toISOString(),
+        'through='+new Date(throughMs).toISOString(),
+        'bars='+requestedBars,'maxBars='+maxBars);
+      throw Error('Recovery historical interval exceeds 30 days or has invalid candle boundaries; position remains quarantined');
+    }
+    const barsByTime=new Map();
+    // Overlapping requests tolerate Coinbase boundary conventions and
+    // pagination caps. We NEVER synthesize an OHLC candle.
+    for(let chunkStart=first;chunkStart<=last;chunkStart+=90*900){
+      const chunkLast=Math.min(last,chunkStart+89*900);
+      let fetched=false;
+      for(let attempt=0;attempt<2&&!fetched;attempt++){
+        try{
+          const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
+            {query:{start:String(chunkStart-900),end:String(chunkLast+1800),granularity:'FIFTEEN_MINUTE',limit:'100'}});
+          if(!Array.isArray(data?.candles))throw Error('Candle response missing');
+          for(const c of data.candles){
+            const t=Number(c.start);
+            if(!Number.isInteger(t)||t<chunkStart||t>chunkLast||t%900!==0)continue;
+            const bar={time:new Date(t*1000).toISOString(),open:Number(c.open),
+              high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};
+            const previous=barsByTime.get(t);
+            if(previous&&JSON.stringify(previous)!==JSON.stringify(bar))
+              throw Error('Conflicting Coinbase candles at '+bar.time);
+            barsByTime.set(t,bar);
+          }
+          fetched=true;
+        }catch(e){if(attempt===1)throw Error('Recovery '+id+' candle window '+
+          new Date(chunkStart*1000).toISOString()+' unavailable: '+String(e?.message||e));}
+      }
+    }
+    return [...barsByTime.values()].sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));
+  }
   // Legacy spot-based EDITH scanner retired for the perpetuals-only transition.
   // Existing journal remains on disk as an archive; never load or mutate it.
   const edithPerp=process.env.DATA_DIR?createEdithPerpScanner({
     // New XRP-only experiment journal resets leaderboard without deleting prior results.
      filePath:path.join(dataDir,'edith-cde-perp-xrp-only-v1.json'),now,
+    fetchHistory:fetchEdithHistory,
     fetchProducts:()=>coinbaseJson('GET','/api/v3/brokerage/products',{query:{product_type:'FUTURE',get_all_products:true,limit:250}}),
     fetchCandles:async id=>{
       const end=Math.floor(now()/900000)*900,start=end-900*125;
       const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
         {query:{start:String(start),end:String(end),granularity:'FIFTEEN_MINUTE',limit:'125'}});
-      return (data.candles||[]).filter(c=>Number(c.start)<end).map(c=>({time:new Date(Number(c.start)*1000).toISOString(),
+      if(!Array.isArray(data?.candles))throw Error('Coinbase candles unavailable for '+id);
+      return data.candles.filter(c=>Number(c.start)<end).map(c=>({time:new Date(Number(c.start)*1000).toISOString(),
         open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)}));
     }
   }):null;
@@ -515,54 +566,8 @@ export function createMarketServer({fetcher = globalThis.fetch, now = Date.now,
       readProduct:productId=>coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(productId)),
       readBook:productId=>coinbaseJson('GET','/api/v3/brokerage/best_bid_ask',{query:{product_ids:productId}})
     }),async (id,fromExclusive,throughInclusive)=>{
-      // EDITH ONLY: read historical completed 15m candles after an already
-      // recorded paper entry. No new entries, trading or exchange mutations.
       if(!EDITH_MARKETS.includes(id))throw Error('Unknown EDITH recovery market');
-      const fromMs=Date.parse(fromExclusive), throughMs=Date.parse(throughInclusive);
-      if(!Number.isFinite(fromMs)||!Number.isFinite(throughMs)||throughMs<=fromMs)
-        throw Error('Recovery timestamps invalid for '+id+' (position remains quarantined)');
-      const first=Math.floor(fromMs/900000)*900+900;
-      const last=Math.floor(throughMs/900000)*900;
-      const requestedBars=(last-first)/900+1;
-      // EDITH-only bounded backfill. The loop below already pages Coinbase history
-      // in 90-candle windows; the old seven-day TOTAL limit incorrectly rejected
-      // older but otherwise recoverable positions before pagination could run.
-      const maxBars=30*24*4; // Up to 30 days, never unbounded history requests.
-      if(!Number.isSafeInteger(first)||!Number.isSafeInteger(last)||
-         !Number.isSafeInteger(requestedBars)||requestedBars<1||requestedBars>maxBars){
-        console.warn('[EDITH recovery]',id,'out-of-range',
-          'from='+new Date(fromMs).toISOString(),
-          'through='+new Date(throughMs).toISOString(),
-          'bars='+requestedBars,'maxBars='+maxBars);
-        throw Error('Recovery historical interval exceeds 30 days or has invalid candle boundaries; position remains quarantined');
-      }
-      const barsByTime=new Map();
-      // Overlapping requests tolerate Coinbase boundary conventions and
-      // pagination caps. We NEVER synthesize an OHLC candle.
-      for(let chunkStart=first;chunkStart<=last;chunkStart+=90*900){
-        const chunkLast=Math.min(last,chunkStart+89*900);
-        let fetched=false;
-        for(let attempt=0;attempt<2&&!fetched;attempt++){
-          try{
-            const data=await coinbaseJson('GET','/api/v3/brokerage/products/'+encodeURIComponent(id)+'/candles',
-              {query:{start:String(chunkStart-900),end:String(chunkLast+1800),granularity:'FIFTEEN_MINUTE',limit:'100'}});
-            if(!Array.isArray(data?.candles))throw Error('Candle response missing');
-            for(const c of data.candles){
-              const t=Number(c.start);
-              if(!Number.isInteger(t)||t<chunkStart||t>chunkLast||t%900!==0)continue;
-              const bar={time:new Date(t*1000).toISOString(),open:Number(c.open),
-                high:Number(c.high),low:Number(c.low),close:Number(c.close),volume:Number(c.volume)};
-              const previous=barsByTime.get(t);
-              if(previous&&JSON.stringify(previous)!==JSON.stringify(bar))
-                throw Error('Conflicting Coinbase candles at '+bar.time);
-              barsByTime.set(t,bar);
-            }
-            fetched=true;
-          }catch(e){if(attempt===1)throw Error('Recovery '+id+' candle window '+
-            new Date(chunkStart*1000).toISOString()+' unavailable: '+String(e?.message||e));}
-        }
-      }
-      return [...barsByTime.values()].sort((a,b)=>Date.parse(a.time)-Date.parse(b.time));
+      return fetchEdithHistory(id,fromExclusive,throughInclusive);
     });
   }
   const edithTimer=setInterval(()=>{edithPaperTick().catch(()=>{});},300000);edithTimer.unref?.();

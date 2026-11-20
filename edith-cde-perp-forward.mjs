@@ -2,7 +2,9 @@
 import {readFile,writeFile,rename} from 'node:fs/promises';
 import {edithSignal,EDITH_STRATEGIES} from './edith-paper-lab.mjs';
 // Controlled XRP-only paper experiment; other perpetual products are excluded.
+import {verifyCandleCoverage} from './edith-gap-recovery.mjs';
 const WATCH=['XRP'];
+const BAR_MS=900000;
 const money=n=>Math.round(n*1e6)/1e6;
 // Coinbase US derivatives use CDE codes such as BIP, ETP, not only BTC-PERP IDs.
 // Accept documented perp-style codes with product metadata; never include dated ordinary futures.
@@ -13,7 +15,7 @@ function isPerpetualWatchProduct(p){
  const cde=CDE_PERP_CODES.has(code)&&(/PERP/i.test(String(d.contract_display_name||''))||/PERP/i.test(String(d.contract_expiry_type||''))||d.perpetual_details!=null||/CDE/i.test(id));
  return (named||cde)&&p.trading_disabled!==true&&Number(d.contract_size)>0;
 }
-export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=Date.now}){
+export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,fetchHistory,now=Date.now}){
  let state=null,busy=null;
  const account=()=>({cash:300,positions:[],trades:[],pending:{},peak:300,maxDrawdownUsd:0});
  const accounts=()=>Object.fromEntries(EDITH_STRATEGIES.map(name=>[name,account()]));
@@ -37,28 +39,63 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
   }
   delete state.health['PERPETUAL_DISCOVERY'];
   for(const p of products){const id=p.product_id;try{
-   const bars=(await fetchCandles(id)).filter(b=>Number.isFinite(b.close)&&b.close>0).sort((a,b)=>a.time.localeCompare(b.time));if(bars.length<70){state.health[id]='INSUFFICIENT_CANDLES';continue;}
-   const last=bars.at(-1),previous=state.watermarks[id];
-   if(!previous){state.watermarks[id]=last.time;state.health[id]='INITIALIZED';continue;}
-   const unseen=bars.filter(b=>b.time>previous);
-   if(unseen.length!==1||Date.parse(unseen[0].time)-Date.parse(previous)!==900000){if(unseen.length)for(const e of Object.values(state.experiments)){delete e.pending[id];for(const pos of e.positions)if(pos.productId===id)pos.dataGap=true;}state.watermarks[id]=last.time;state.health[id]=unseen.length?'RESYNCED_GAP':'WAITING';continue;}
-   const bar=unseen[0];state.watermarks[id]=bar.time;
+   const bars=(await fetchCandles(id)).sort((a,b)=>a.time.localeCompare(b.time));
+   const bar=bars.at(-1),previous=state.watermarks[id];
+   if(!bar){state.health[id]='NO_CANDLES';continue;}
+   if(previous&&bar.time<previous){state.health[id]='STALE_CANDLES';continue;}
+   const advanced=!previous||bar.time>previous;
+   const fresh=now()-Date.parse(bar.time)<3*BAR_MS;
+   if(advanced)state.watermarks[id]=bar.time;
+
+   const coverageByStart=new Map();
+   function coverage(start){
+    if(!coverageByStart.has(start))coverageByStart.set(start,(async()=>{
+     const recent=verifyCandleCoverage(bars,start,bar.time,BAR_MS);
+     if(recent.ok||!fetchHistory)return recent;
+     try{
+      const history=await fetchHistory(id,start,bar.time);
+      return verifyCandleCoverage(history,start,bar.time,BAR_MS);
+     }catch(error){return {ok:false,reason:String(error.message||error)};}
+    })());
+    return coverageByStart.get(start);
+   }
+   let unresolved=false;
+   let tailStart=bars.length-1;
+   while(tailStart>0&&Date.parse(bars[tailStart].time)-Date.parse(bars[tailStart-1].time)===BAR_MS)tailStart--;
+   const signalBars=bars.slice(tailStart);
+   const contiguous=signalBars.length>=70&&verifyCandleCoverage(
+    signalBars,new Date(Date.parse(signalBars[0].time)-BAR_MS).toISOString(),bar.time,BAR_MS
+   ).ok;
+   const nextBar=previous&&Date.parse(bar.time)-Date.parse(previous)===BAR_MS;
    for(const strategy of EDITH_STRATEGIES){const e=state.experiments[strategy];
-    for(const position of [...e.positions].filter(x=>x.productId===id&&!x.dataGap)){
-     if(bar.time<=position.entryTime)continue;
-     const stop=position.side==='LONG'?bar.low<=position.stop:bar.high>=position.stop;
-     const target=position.side==='LONG'?bar.high>=position.target:bar.low<=position.target;
-     if(!stop&&!target)continue;
-     const exit=(stop?position.stop:position.target)*(position.side==='LONG'?0.9995:1.0005);
-     const gross=(position.side==='LONG'?exit-position.entry:position.entry-exit)*position.contractSize;
-     const fees=(position.entry+exit)*position.contractSize*0.0006;
-     const net=money(gross-fees);e.cash=money(e.cash+net);
-     e.peak=Math.max(e.peak,e.cash);e.maxDrawdownUsd=Math.max(e.maxDrawdownUsd,e.peak-e.cash);
-     e.trades.push({...position,exit,exitTime:bar.time,feesUsd:fees,grossPnlUsd:gross,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});
-     e.positions=e.positions.filter(x=>x!==position);
+    for(const position of [...e.positions].filter(x=>x.productId===id)){
+     // Old quarantined entries have no checkpoint. Replay from their recorded entry.
+     const from=position.checkedThrough||(position.dataGap?position.entryTime:
+      (previous&&previous>position.entryTime?previous:position.entryTime));
+     if(from>bar.time)continue;
+     const recovered=await coverage(from);
+     if(!recovered.ok){
+      position.dataGap=true;position.dataGapReason=recovered.reason;unresolved=true;continue;
+     }
+     delete position.dataGap;
+     delete position.dataGapReason;
+     for(const bar of recovered.bars){
+      const stop=position.side==='LONG'?bar.low<=position.stop:bar.high>=position.stop;
+      const target=position.side==='LONG'?bar.high>=position.target:bar.low<=position.target;
+      if(!stop&&!target){position.checkedThrough=bar.time;continue;}
+      const exit=(stop?position.stop:position.target)*(position.side==='LONG'?0.9995:1.0005);
+      const gross=(position.side==='LONG'?exit-position.entry:position.entry-exit)*position.contractSize;
+      const fees=(position.entry+exit)*position.contractSize*0.0006;
+      const net=money(gross-fees);e.cash=money(e.cash+net);
+      e.peak=Math.max(e.peak,e.cash);e.maxDrawdownUsd=Math.max(e.maxDrawdownUsd,e.peak-e.cash);
+      e.trades.push({...position,exit,exitTime:bar.time,feesUsd:fees,grossPnlUsd:gross,netPnlUsd:net,outcome:stop?'STOP':'TARGET'});
+      e.positions=e.positions.filter(x=>x!==position);
+      break;
+     }
     }
+    if(!advanced&&fresh&&contiguous)continue;
     const prior=e.pending[id];delete e.pending[id];
-    if(prior&&prior.time===previous&&!e.positions.some(x=>x.productId===id)){
+    if(fresh&&contiguous&&nextBar&&prior&&prior.time===previous&&!e.positions.some(x=>x.productId===id)){
      const size=Number(p.future_product_details.contract_size),entry=bar.close;
      const margin=size*entry/3,stopDistance=entry*0.0074,targetDistance=entry*0.0206;
      const estimatedRisk=size*stopDistance+size*entry*0.0022;
@@ -67,10 +104,11 @@ export function createEdithPerpScanner({filePath,fetchProducts,fetchCandles,now=
       e.positions.push({productId:id,market:id,side:prior.side,contracts:1,contractSize:size,entry,stop:prior.side==='LONG'?entry-stopDistance:entry+stopDistance,target:prior.side==='LONG'?entry+targetDistance:entry-targetDistance,marginUsd:money(margin),entryTime:bar.time,signalTime:prior.time,strategy});
      }
     }
-    const side=edithSignal(bars,bars.length-1,strategy);
+    if(!advanced||!fresh||!contiguous)continue;
+    const side=edithSignal(signalBars,signalBars.length-1,strategy);
     if(side==='LONG'||side==='SHORT')e.pending[id]={productId:id,side,time:bar.time,strategy};
    }
-   state.health[id]='OK';
+   state.health[id]=!fresh?'STALE_CANDLES':unresolved?'MISSING_CANDLES':!contiguous?'INSUFFICIENT_CONTIGUOUS_CANDLES':'OK';
   }catch(e){state.health[id]='ERROR: '+String(e.message).slice(0,100);}}
   state.scans++;state.lastRun=new Date(now()).toISOString();state.signals=state.signals.slice(-100);state.trades=state.trades.slice(-500);await save();return snapshot();
  })();try{return await busy;}finally{busy=null;}}
